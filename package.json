@@ -1,0 +1,25 @@
+{
+  "name": "sysml-modeler",
+  "version": "0.1.0",
+  "description": "Standalone SysML v2 modeling tool with Neo4j backend",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "start": "npm run start -w backend"
+  },
+  "keywords": [
+    "sysml",
+    "neo4j",
+    "modeling",
+    "mbse"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
