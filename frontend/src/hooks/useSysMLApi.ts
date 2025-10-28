@@ -24,7 +24,7 @@ export function useViewpointTypes(viewpointId?: string) {
   });
 }
 
-export function useSysMLMutations(viewpointId?: string) {
+export function useSysMLMutations(_viewpointId?: string) {
   const queryClient = useQueryClient();
 
   const invalidateModel = () => {

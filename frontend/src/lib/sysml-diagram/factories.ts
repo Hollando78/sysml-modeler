@@ -27,6 +27,10 @@ import type {
   SysMLStateTransitionSpec
 } from './types';
 
+// ============================================================================
+// Core Factory Infrastructure
+// ============================================================================
+
 const defaultPosition: XYPosition = { x: 0, y: 0 };
 
 const normalizePosition = (position?: Partial<XYPosition>): XYPosition => ({
@@ -34,16 +38,9 @@ const normalizePosition = (position?: Partial<XYPosition>): XYPosition => ({
   y: position?.y ?? defaultPosition.y
 });
 
-const withBaseData = (
-  spec: { id: string; name: string; stereotype?: string; description?: string },
-  kind: SysMLNodeKind
-): SysMLNodeData => ({
-  id: spec.id,
-  name: spec.name,
-  stereotype: spec.stereotype,
-  documentation: spec.description,
-  kind
-});
+// ============================================================================
+// Compartment Builders
+// ============================================================================
 
 const buildCompartment = (title: string, items: SysMLCompartment['items']): SysMLCompartment => ({
   title,
@@ -96,287 +93,721 @@ const stringsToCompartment = (title: string, values?: string[]): SysMLCompartmen
   );
 };
 
+// ============================================================================
+// Generic Node Factory
+// ============================================================================
+
+type CompartmentBuilder = (spec: any) => SysMLCompartment | undefined;
+
+interface NodeFactoryConfig {
+  type: string;
+  kind: SysMLNodeKind;
+  elementKind?: 'definition' | 'usage';
+  compartmentBuilders?: CompartmentBuilder[];
+  dataMappers?: Array<(spec: any, data: Partial<SysMLNodeData>) => void>;
+}
+
+const createGenericNode = (
+  spec: any,
+  config: NodeFactoryConfig,
+  position?: Partial<XYPosition>
+): SysMLReactFlowNode => {
+  const baseData: SysMLNodeData = {
+    id: spec.id,
+    name: spec.name,
+    stereotype: spec.stereotype,
+    documentation: spec.description,
+    kind: config.kind
+  };
+
+  // Apply additional data mappers
+  if (config.dataMappers) {
+    config.dataMappers.forEach((mapper) => mapper(spec, baseData));
+  }
+
+  // Build compartments
+  const compartments = config.compartmentBuilders
+    ? config.compartmentBuilders.map((builder) => builder(spec)).filter(Boolean)
+    : [];
+
+  return {
+    id: spec.id,
+    type: config.type,
+    position: normalizePosition(position),
+    draggable: true,
+    selectable: true,
+    connectable: true,
+    data: {
+      ...baseData,
+      ...(config.elementKind && { elementKind: config.elementKind }),
+      ...(compartments.length > 0 && { compartments: compartments as SysMLCompartment[] })
+    }
+  };
+};
+
+// ============================================================================
+// Common Data Mappers
+// ============================================================================
+
+const addBaseDefinition = (spec: any, data: Partial<SysMLNodeData>) => {
+  if (spec.definition) data.baseDefinition = spec.definition;
+};
+
+const addRedefines = (spec: any, data: Partial<SysMLNodeData>) => {
+  if (spec.redefines) data.redefines = spec.redefines;
+};
+
+const addSubsets = (spec: any, data: Partial<SysMLNodeData>) => {
+  if (spec.subsets) data.subsets = spec.subsets;
+};
+
+const addStatus = (spec: any, data: Partial<SysMLNodeData>) => {
+  if (spec.status) data.status = spec.status;
+};
+
+const addControlType = (spec: any, data: Partial<SysMLNodeData>) => {
+  if (spec.controlType) {
+    data.stereotype = spec.controlType;
+    data.controlType = spec.controlType;
+  }
+};
+
+const addEmphasis = (spec: any, data: Partial<SysMLNodeData>) => {
+  if (spec.expression) data.emphasis = spec.expression;
+  if (spec.calculationBody) data.emphasis = spec.calculationBody;
+};
+
+// ============================================================================
+// Node Configuration Registry
+// ============================================================================
+
+const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
+  // Structural - Parts
+  'part-definition': {
+    type: 'sysml.part-definition',
+    kind: 'part-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => propertiesToItems('attributes', spec.attributes),
+      (spec) => portsToCompartment(spec.ports),
+      (spec) => stringsToCompartment('actions', spec.actions),
+      (spec) => stringsToCompartment('states', spec.states)
+    ]
+  },
+  'part-usage': {
+    type: 'sysml.part-usage',
+    kind: 'part-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addRedefines, addSubsets],
+    compartmentBuilders: [
+      (spec) => propertiesToItems('attributes', spec.attributes),
+      (spec) => portsToCompartment(spec.ports)
+    ]
+  },
+
+  // Structural - Attributes
+  'attribute-definition': {
+    type: 'sysml.attribute-definition',
+    kind: 'attribute-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => spec.type ? buildCompartment('type', [{ label: spec.type }]) : undefined,
+      (spec) => spec.defaultValue ? buildCompartment('default', [{ label: spec.defaultValue }]) : undefined
+    ]
+  },
+  'attribute-usage': {
+    type: 'sysml.attribute-usage',
+    kind: 'attribute-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addRedefines, addSubsets],
+    compartmentBuilders: [
+      (spec) => spec.type ? buildCompartment('type', [{ label: spec.type }]) : undefined,
+      (spec) => spec.value ? buildCompartment('value', [{ label: spec.value }]) : undefined
+    ]
+  },
+
+  // Structural - Ports
+  'port-definition': {
+    type: 'sysml.port-definition',
+    kind: 'port-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('direction', spec.direction ? [spec.direction] : undefined),
+      (spec) => propertiesToItems('items', spec.items)
+    ]
+  },
+  'port-usage': {
+    type: 'sysml.port-usage',
+    kind: 'port-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('direction', spec.direction ? [spec.direction] : undefined),
+      (spec) => propertiesToItems('items', spec.items)
+    ]
+  },
+
+  // Structural - Items
+  'item-definition': {
+    type: 'sysml.item-definition',
+    kind: 'item-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('quantity kind', spec.quantityKind ? [spec.quantityKind] : undefined),
+      (spec) => stringsToCompartment('unit', spec.unit ? [spec.unit] : undefined)
+    ]
+  },
+  'item-usage': {
+    type: 'sysml.item-usage',
+    kind: 'item-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('quantity kind', spec.quantityKind ? [spec.quantityKind] : undefined),
+      (spec) => stringsToCompartment('unit', spec.unit ? [spec.unit] : undefined)
+    ]
+  },
+
+  // Structural - Connections
+  'connection-definition': {
+    type: 'sysml.connection-definition',
+    kind: 'connection-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => propertiesToItems('ends', spec.ends),
+      (spec) => propertiesToItems('attributes', spec.attributes)
+    ]
+  },
+  'connection-usage': {
+    type: 'sysml.connection-usage',
+    kind: 'connection-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addRedefines],
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('connected', spec.connectedParts),
+      (spec) => propertiesToItems('attributes', spec.attributes)
+    ]
+  },
+
+  // Structural - Interfaces
+  'interface-definition': {
+    type: 'sysml.interface-definition',
+    kind: 'interface-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => portsToCompartment(spec.ports),
+      (spec) => propertiesToItems('attributes', spec.attributes)
+    ]
+  },
+  'interface-usage': {
+    type: 'sysml.interface-usage',
+    kind: 'interface-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('ports', spec.connectedPorts)
+    ]
+  },
+
+  // Structural - Allocations
+  'allocation-definition': {
+    type: 'sysml.allocation-definition',
+    kind: 'allocation-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => spec.source ? buildCompartment('source', [{ label: spec.source }]) : undefined,
+      (spec) => spec.target ? buildCompartment('target', [{ label: spec.target }]) : undefined
+    ]
+  },
+  'allocation-usage': {
+    type: 'sysml.allocation-usage',
+    kind: 'allocation-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => spec.allocatedFrom ? buildCompartment('from', [{ label: spec.allocatedFrom }]) : undefined,
+      (spec) => spec.allocatedTo ? buildCompartment('to', [{ label: spec.allocatedTo }]) : undefined
+    ]
+  },
+
+  // Structural - References
+  'reference-usage': {
+    type: 'sysml.reference-usage',
+    kind: 'reference-usage',
+    elementKind: 'usage',
+    dataMappers: [addRedefines],
+    compartmentBuilders: [
+      (spec) => spec.referencedElement ? buildCompartment('references', [{ label: spec.referencedElement }]) : undefined
+    ]
+  },
+
+  // Structural - Occurrences
+  'occurrence-definition': {
+    type: 'sysml.occurrence-definition',
+    kind: 'occurrence-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => spec.lifeClass ? buildCompartment('lifeClass', [{ label: spec.lifeClass }]) : undefined
+    ]
+  },
+  'occurrence-usage': {
+    type: 'sysml.occurrence-usage',
+    kind: 'occurrence-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => spec.portionOf ? buildCompartment('portionOf', [{ label: spec.portionOf }]) : undefined
+    ]
+  },
+
+  // Behavioral - Actions
+  'action-definition': {
+    type: 'sysml.action-definition',
+    kind: 'action-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => propertiesToItems('inputs', spec.inputs),
+      (spec) => propertiesToItems('outputs', spec.outputs)
+    ]
+  },
+  'action-usage': {
+    type: 'sysml.action-usage',
+    kind: 'action-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addRedefines],
+    compartmentBuilders: [
+      (spec) => propertiesToItems('inputs', spec.inputs),
+      (spec) => propertiesToItems('outputs', spec.outputs)
+    ]
+  },
+
+  // Behavioral - Activity Control
+  'activity-control': {
+    type: 'sysml.activity-control',
+    kind: 'activity-control',
+    dataMappers: [addControlType]
+  },
+
+  // Behavioral - Calculations
+  'calculation-definition': {
+    type: 'sysml.calculation-definition',
+    kind: 'calculation-definition',
+    elementKind: 'definition',
+    dataMappers: [addEmphasis],
+    compartmentBuilders: [
+      (spec) => propertiesToItems('inputs', spec.inputs),
+      (spec) => propertiesToItems('outputs', spec.outputs),
+      (spec) => spec.returnResult ? buildCompartment('return', [{ label: spec.returnResult }]) : undefined
+    ]
+  },
+  'calculation-usage': {
+    type: 'sysml.calculation-usage',
+    kind: 'calculation-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addEmphasis],
+    compartmentBuilders: [
+      (spec) => propertiesToItems('inputs', spec.inputs),
+      (spec) => propertiesToItems('outputs', spec.outputs)
+    ]
+  },
+
+  // Behavioral - Advanced Actions
+  'perform-action': {
+    type: 'sysml.perform-action',
+    kind: 'perform-action',
+    compartmentBuilders: [
+      (spec) => spec.performedAction ? buildCompartment('performs', [{ label: spec.performedAction }]) : undefined,
+      (spec) => propertiesToItems('inputs', spec.inputs),
+      (spec) => propertiesToItems('outputs', spec.outputs)
+    ]
+  },
+  'send-action': {
+    type: 'sysml.send-action',
+    kind: 'send-action',
+    compartmentBuilders: [
+      (spec) => spec.payload ? buildCompartment('payload', [{ label: spec.payload }]) : undefined,
+      (spec) => spec.target ? buildCompartment('to', [{ label: spec.target }]) : undefined,
+      (spec) => spec.via ? buildCompartment('via', [{ label: spec.via }]) : undefined
+    ]
+  },
+  'accept-action': {
+    type: 'sysml.accept-action',
+    kind: 'accept-action',
+    compartmentBuilders: [
+      (spec) => spec.payloadType ? buildCompartment('accepts', [{ label: spec.payloadType }]) : undefined,
+      (spec) => spec.via ? buildCompartment('via', [{ label: spec.via }]) : undefined,
+      (spec) => spec.receiver ? buildCompartment('receiver', [{ label: spec.receiver }]) : undefined
+    ]
+  },
+  'assignment-action': {
+    type: 'sysml.assignment-action',
+    kind: 'assignment-action',
+    compartmentBuilders: [
+      (spec) => spec.targetFeature ? buildCompartment('target', [{ label: spec.targetFeature }]) : undefined,
+      (spec) => spec.valueExpression ? buildCompartment('value', [{ label: spec.valueExpression }]) : undefined
+    ]
+  },
+  'if-action': {
+    type: 'sysml.if-action',
+    kind: 'if-action',
+    compartmentBuilders: [
+      (spec) => spec.condition ? buildCompartment('if', [{ label: spec.condition }]) : undefined,
+      (spec) => spec.thenAction ? buildCompartment('then', [{ label: spec.thenAction }]) : undefined,
+      (spec) => spec.elseAction ? buildCompartment('else', [{ label: spec.elseAction }]) : undefined
+    ]
+  },
+  'for-loop-action': {
+    type: 'sysml.for-loop-action',
+    kind: 'for-loop-action',
+    compartmentBuilders: [
+      (spec) => spec.variable ? buildCompartment('var', [{ label: spec.variable }]) : undefined,
+      (spec) => spec.collection ? buildCompartment('in', [{ label: spec.collection }]) : undefined,
+      (spec) => spec.body ? buildCompartment('do', [{ label: spec.body }]) : undefined
+    ]
+  },
+  'while-loop-action': {
+    type: 'sysml.while-loop-action',
+    kind: 'while-loop-action',
+    compartmentBuilders: [
+      (spec) => spec.condition ? buildCompartment('while', [{ label: spec.condition }]) : undefined,
+      (spec) => spec.body ? buildCompartment('do', [{ label: spec.body }]) : undefined
+    ]
+  },
+
+  // Behavioral - States
+  'state': {
+    type: 'sysml.state',
+    kind: 'state',
+    dataMappers: [
+      (spec, data) => {
+        data.stereotype = 'state';
+        if (spec.status) data.status = spec.status;
+      }
+    ],
+    compartmentBuilders: [
+      (spec) => spec.entryAction ? { title: 'entry', items: [{ label: spec.entryAction }] } : undefined,
+      (spec) => spec.doActivity ? { title: 'do', items: [{ label: spec.doActivity }] } : undefined,
+      (spec) => spec.exitAction ? { title: 'exit', items: [{ label: spec.exitAction }] } : undefined
+    ]
+  },
+  'state-machine': {
+    type: 'sysml.state-machine',
+    kind: 'state-machine',
+    dataMappers: [
+      (spec, data) => {
+        data.stereotype = spec.stereotype ?? 'stateMachine';
+      }
+    ],
+    compartmentBuilders: [
+      (spec) => ({ title: 'states', items: spec.states.map((state: any) => ({ label: state.name })) })
+    ]
+  },
+  'state-definition': {
+    type: 'sysml.state-definition',
+    kind: 'state-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('substates', spec.substates)
+    ]
+  },
+  'state-usage': {
+    type: 'sysml.state-usage',
+    kind: 'state-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => spec.entryAction ? buildCompartment('entry', [{ label: spec.entryAction }]) : undefined,
+      (spec) => spec.doAction ? buildCompartment('do', [{ label: spec.doAction }]) : undefined,
+      (spec) => spec.exitAction ? buildCompartment('exit', [{ label: spec.exitAction }]) : undefined,
+      (spec) => stringsToCompartment('substates', spec.substates)
+    ]
+  },
+  'transition-usage': {
+    type: 'sysml.transition-usage',
+    kind: 'transition-usage',
+    compartmentBuilders: [
+      (spec) => spec.trigger ? buildCompartment('trigger', [{ label: spec.trigger }]) : undefined,
+      (spec) => spec.guard ? buildCompartment('guard', [{ label: spec.guard }]) : undefined,
+      (spec) => spec.effect ? buildCompartment('effect', [{ label: spec.effect }]) : undefined
+    ]
+  },
+  'exhibit-state': {
+    type: 'sysml.exhibit-state',
+    kind: 'exhibit-state',
+    compartmentBuilders: [
+      (spec) => spec.exhibitedState ? buildCompartment('state', [{ label: spec.exhibitedState }]) : undefined,
+      (spec) => spec.performer ? buildCompartment('performer', [{ label: spec.performer }]) : undefined
+    ]
+  },
+
+  // Requirements & Constraints
+  'requirement-definition': {
+    type: 'sysml.requirement-definition',
+    kind: 'requirement-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => spec.text ? buildCompartment('text', [{ label: spec.text }]) : undefined,
+      (spec) => spec.reqId ? buildCompartment('id', [{ label: spec.reqId }]) : undefined,
+      (spec) => stringsToCompartment('assume', spec.assumeConstraint),
+      (spec) => stringsToCompartment('require', spec.requireConstraint),
+      (spec) => stringsToCompartment('concerns', spec.framedConcerns),
+      (spec) => stringsToCompartment('actors', spec.actors)
+    ]
+  },
+  'requirement-usage': {
+    type: 'sysml.requirement-usage',
+    kind: 'requirement-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addStatus],
+    compartmentBuilders: [
+      (spec) => spec.text ? buildCompartment('text', [{ label: spec.text }]) : undefined,
+      (spec) => spec.reqId ? buildCompartment('id', [{ label: spec.reqId }]) : undefined,
+      (spec) => stringsToCompartment('assume', spec.assumeConstraint),
+      (spec) => stringsToCompartment('require', spec.requireConstraint)
+    ]
+  },
+  'constraint-definition': {
+    type: 'sysml.constraint-definition',
+    kind: 'constraint-definition',
+    elementKind: 'definition',
+    dataMappers: [addEmphasis],
+    compartmentBuilders: []
+  },
+  'constraint-usage': {
+    type: 'sysml.constraint-usage',
+    kind: 'constraint-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addEmphasis],
+    compartmentBuilders: []
+  },
+
+  // Verification & Analysis Cases
+  'verification-case-definition': {
+    type: 'sysml.verification-case-definition',
+    kind: 'verification-case-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => spec.verifiedRequirement ? buildCompartment('verifies', [{ label: spec.verifiedRequirement }]) : undefined,
+      (spec) => spec.objectiveRequirement ? buildCompartment('objective', [{ label: spec.objectiveRequirement }]) : undefined
+    ]
+  },
+  'verification-case-usage': {
+    type: 'sysml.verification-case-usage',
+    kind: 'verification-case-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addStatus],
+    compartmentBuilders: [
+      (spec) => spec.verifiedRequirement ? buildCompartment('verifies', [{ label: spec.verifiedRequirement }]) : undefined,
+      (spec) => spec.verificationMethod ? buildCompartment('method', [{ label: spec.verificationMethod }]) : undefined
+    ]
+  },
+  'analysis-case-definition': {
+    type: 'sysml.analysis-case-definition',
+    kind: 'analysis-case-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => spec.analysisAction ? buildCompartment('action', [{ label: spec.analysisAction }]) : undefined,
+      (spec) => spec.resultExpression ? buildCompartment('result', [{ label: spec.resultExpression }]) : undefined
+    ]
+  },
+  'analysis-case-usage': {
+    type: 'sysml.analysis-case-usage',
+    kind: 'analysis-case-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => spec.analysisAction ? buildCompartment('action', [{ label: spec.analysisAction }]) : undefined,
+      (spec) => spec.resultExpression ? buildCompartment('result', [{ label: spec.resultExpression }]) : undefined
+    ]
+  },
+
+  // Use Cases & Concerns
+  'use-case-definition': {
+    type: 'sysml.use-case-definition',
+    kind: 'use-case-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('includes', spec.includedUseCases),
+      (spec) => spec.objectiveRequirement ? buildCompartment('objective', [{ label: spec.objectiveRequirement }]) : undefined
+    ]
+  },
+  'use-case-usage': {
+    type: 'sysml.use-case-usage',
+    kind: 'use-case-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition, addStatus],
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('actors', spec.actors),
+      (spec) => stringsToCompartment('includes', spec.includes),
+      (spec) => stringsToCompartment('extends', spec.extends)
+    ]
+  },
+  'concern-definition': {
+    type: 'sysml.concern-definition',
+    kind: 'concern-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => spec.text ? buildCompartment('text', [{ label: spec.text }]) : undefined
+    ]
+  },
+  'concern-usage': {
+    type: 'sysml.concern-usage',
+    kind: 'concern-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => spec.text ? buildCompartment('text', [{ label: spec.text }]) : undefined,
+      (spec) => stringsToCompartment('stakeholders', spec.stakeholders)
+    ]
+  },
+
+  // Organizational
+  'package': {
+    type: 'sysml.package',
+    kind: 'package',
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('members', spec.members),
+      (spec) => stringsToCompartment('imports', spec.imports)
+    ]
+  },
+  'library-package': {
+    type: 'sysml.library-package',
+    kind: 'library-package',
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('members', spec.members)
+    ]
+  },
+
+  // Interactions
+  'sequence-lifeline': {
+    type: 'sysml.sequence-lifeline',
+    kind: 'sequence-lifeline',
+    dataMappers: [
+      (spec, data) => {
+        data.stereotype = spec.stereotype ?? 'lifeline';
+        data.documentation = spec.classifier;
+      }
+    ]
+  },
+  'interaction': {
+    type: 'sysml.interaction',
+    kind: 'interaction',
+    compartmentBuilders: [
+      (spec) => stringsToCompartment('participants', spec.participants),
+      (spec) => stringsToCompartment('messages', spec.messages)
+    ]
+  },
+
+  // Metadata
+  'metadata-definition': {
+    type: 'sysml.metadata-definition',
+    kind: 'metadata-definition',
+    elementKind: 'definition',
+    compartmentBuilders: [
+      (spec) => spec.baseType ? buildCompartment('baseType', [{ label: spec.baseType }]) : undefined,
+      (spec) => propertiesToItems('attributes', spec.attributes)
+    ]
+  },
+  'metadata-usage': {
+    type: 'sysml.metadata-usage',
+    kind: 'metadata-usage',
+    elementKind: 'usage',
+    dataMappers: [addBaseDefinition],
+    compartmentBuilders: [
+      (spec) => spec.annotatedElement ? buildCompartment('annotates', [{ label: spec.annotatedElement }]) : undefined
+    ]
+  },
+  'comment': {
+    type: 'sysml.comment',
+    kind: 'comment',
+    dataMappers: [
+      (spec, data) => {
+        data.name = 'Comment';
+        data.documentation = spec.body;
+      }
+    ],
+    compartmentBuilders: [
+      (spec) => spec.annotatedElement ? buildCompartment('annotates', [{ label: spec.annotatedElement }]) : undefined
+    ]
+  },
+  'documentation': {
+    type: 'sysml.documentation',
+    kind: 'documentation',
+    dataMappers: [
+      (spec, data) => {
+        data.name = 'Documentation';
+        data.documentation = spec.body;
+      }
+    ],
+    compartmentBuilders: [
+      (spec) => spec.documentedElement ? buildCompartment('documents', [{ label: spec.documentedElement }]) : undefined
+    ]
+  }
+};
+
+// ============================================================================
+// Legacy Individual Factory Functions (for backwards compatibility)
+// ============================================================================
+
 export const createPartDefinitionNode = (
   spec: SysMLPartDefinitionSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.part-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'part-definition'),
-    elementKind: 'definition',
-    compartments: [
-      propertiesToItems('attributes', spec.attributes),
-      portsToCompartment(spec.ports),
-      stringsToCompartment('actions', spec.actions),
-      stringsToCompartment('states', spec.states)
-    ].filter(Boolean) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['part-definition'], position);
 
 export const createPartUsageNode = (
   spec: SysMLPartUsageSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.part-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'part-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    redefines: spec.redefines,
-    subsets: spec.subsets,
-    compartments: [propertiesToItems('attributes', spec.attributes), portsToCompartment(spec.ports)].filter(
-      Boolean
-    ) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['part-usage'], position);
 
 export const createActionDefinitionNode = (
   spec: SysMLActionDefinitionSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.action-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'action-definition'),
-    elementKind: 'definition',
-    compartments: [
-      propertiesToItems('inputs', spec.inputs),
-      propertiesToItems('outputs', spec.outputs)
-    ].filter(Boolean) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['action-definition'], position);
 
 export const createActionUsageNode = (
   spec: SysMLActionUsageSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.action-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'action-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    redefines: spec.redefines,
-    compartments: [
-      propertiesToItems('inputs', spec.inputs),
-      propertiesToItems('outputs', spec.outputs)
-    ].filter(Boolean) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['action-usage'], position);
 
 export const createPortDefinitionNode = (
   spec: SysMLPortDefinitionSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.port-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'port-definition'),
-    elementKind: 'definition',
-    compartments: [
-      stringsToCompartment('direction', spec.direction ? [spec.direction] : undefined),
-      propertiesToItems('items', spec.items)
-    ].filter(Boolean) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['port-definition'], position);
 
 export const createPortUsageNode = (
   spec: SysMLPortUsageSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.port-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'port-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      stringsToCompartment('direction', spec.direction ? [spec.direction] : undefined),
-      propertiesToItems('items', spec.items)
-    ].filter(Boolean) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['port-usage'], position);
 
 export const createItemDefinitionNode = (
   spec: SysMLItemDefinitionSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.item-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'item-definition'),
-    elementKind: 'definition',
-    compartments: [
-      stringsToCompartment('quantity kind', spec.quantityKind ? [spec.quantityKind] : undefined),
-      stringsToCompartment('unit', spec.unit ? [spec.unit] : undefined)
-    ].filter(Boolean) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['item-definition'], position);
 
 export const createItemUsageNode = (
   spec: SysMLItemUsageSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.item-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'item-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      stringsToCompartment('quantity kind', spec.quantityKind ? [spec.quantityKind] : undefined),
-      stringsToCompartment('unit', spec.unit ? [spec.unit] : undefined)
-    ].filter(Boolean) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['item-usage'], position);
 
 export const createActivityControlNode = (
   spec: SysMLActivityControlSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.activity-control',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(
-      {
-        id: spec.id,
-        name: spec.name,
-        stereotype: spec.controlType,
-        description: spec.documentation
-      },
-      'activity-control'
-    ),
-    controlType: spec.controlType
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['activity-control'], position);
 
 export const createStateNode = (
   spec: SysMLStateSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.state',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(
-      {
-        id: spec.id,
-        name: spec.name,
-        stereotype: 'state',
-        description: undefined
-      },
-      'state'
-    ),
-    status: spec.status,
-    compartments: [
-      spec.entryAction && {
-        title: 'entry',
-        items: [{ label: spec.entryAction }]
-      },
-      spec.doActivity && {
-        title: 'do',
-        items: [{ label: spec.doActivity }]
-      },
-      spec.exitAction && {
-        title: 'exit',
-        items: [{ label: spec.exitAction }]
-      }
-    ].filter(Boolean) as SysMLNodeData['compartments']
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['state'], position);
 
 export const createStateMachineNode = (
   spec: SysMLStateMachineSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.state-machine',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(
-      {
-        id: spec.id,
-        name: spec.name,
-        stereotype: spec.stereotype ?? 'stateMachine',
-        description: undefined
-      },
-      'state-machine'
-    ),
-    compartments: [
-      {
-        title: 'states',
-        items: spec.states.map((state) => ({ label: state.name }))
-      }
-    ]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['state-machine'], position);
 
 export const createSequenceLifelineNode = (
   spec: SysMLSequenceLifelineSpec,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.sequence-lifeline',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(
-      {
-        id: spec.id,
-        name: spec.name,
-        stereotype: spec.stereotype ?? 'lifeline',
-        description: spec.classifier
-      },
-      'sequence-lifeline'
-    )
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['sequence-lifeline'], position);
 
 export const createStateTransitionEdge = (
   transition: SysMLStateTransitionSpec
@@ -423,948 +854,225 @@ export const createRelationshipEdge = (spec: SysMLRelationshipSpec): SysMLReactF
   } satisfies SysMLEdgeData
 });
 
-// New SysML v2 Factory Functions
 
-import type {
-  SysMLAttributeDefinitionSpec,
-  SysMLAttributeUsageSpec,
-  SysMLConnectionDefinitionSpec,
-  SysMLConnectionUsageSpec,
-  SysMLInterfaceDefinitionSpec,
-  SysMLInterfaceUsageSpec,
-  SysMLAllocationDefinitionSpec,
-  SysMLAllocationUsageSpec,
-  SysMLReferenceUsageSpec,
-  SysMLOccurrenceDefinitionSpec,
-  SysMLOccurrenceUsageSpec,
-  SysMLCalculationDefinitionSpec,
-  SysMLCalculationUsageSpec,
-  SysMLPerformActionSpec,
-  SysMLSendActionSpec,
-  SysMLAcceptActionSpec,
-  SysMLAssignmentActionSpec,
-  SysMLIfActionSpec,
-  SysMLForLoopActionSpec,
-  SysMLWhileLoopActionSpec,
-  SysMLStateDefinitionSpec,
-  SysMLStateUsageSpec,
-  SysMLTransitionUsageSpec,
-  SysMLExhibitStateSpec,
-  SysMLRequirementDefinitionSpec,
-  SysMLRequirementUsageSpec,
-  SysMLConstraintDefinitionSpec,
-  SysMLConstraintUsageSpec,
-  SysMLVerificationCaseDefinitionSpec,
-  SysMLVerificationCaseUsageSpec,
-  SysMLAnalysisCaseDefinitionSpec,
-  SysMLAnalysisCaseUsageSpec,
-  SysMLUseCaseDefinitionSpec,
-  SysMLUseCaseUsageSpec,
-  SysMLConcernDefinitionSpec,
-  SysMLConcernUsageSpec,
-  SysMLPackageSpec,
-  SysMLLibraryPackageSpec,
-  SysMLInteractionSpec,
-  SysMLMetadataDefinitionSpec,
-  SysMLMetadataUsageSpec,
-  SysMLCommentSpec,
-  SysMLDocumentationSpec
-} from './types';
+// ============================================================================
+// Additional Legacy Factory Functions
+// ============================================================================
 
-// Attribute Definition and Usage
 export const createAttributeDefinitionNode = (
-  spec: SysMLAttributeDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.attribute-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'attribute-definition'),
-    elementKind: 'definition',
-    compartments: [
-      spec.type ? buildCompartment('type', [{ label: spec.type }]) : undefined,
-      spec.defaultValue ? buildCompartment('default', [{ label: spec.defaultValue }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['attribute-definition'], position);
 
 export const createAttributeUsageNode = (
-  spec: SysMLAttributeUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.attribute-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'attribute-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    redefines: spec.redefines,
-    subsets: spec.subsets,
-    compartments: [
-      spec.type ? buildCompartment('type', [{ label: spec.type }]) : undefined,
-      spec.value ? buildCompartment('value', [{ label: spec.value }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['attribute-usage'], position);
 
-// Connection Definition and Usage
 export const createConnectionDefinitionNode = (
-  spec: SysMLConnectionDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.connection-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'connection-definition'),
-    elementKind: 'definition',
-    compartments: [
-      propertiesToItems('ends', spec.ends),
-      propertiesToItems('attributes', spec.attributes)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['connection-definition'], position);
 
 export const createConnectionUsageNode = (
-  spec: SysMLConnectionUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.connection-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'connection-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    redefines: spec.redefines,
-    compartments: [
-      stringsToCompartment('connected', spec.connectedParts),
-      propertiesToItems('attributes', spec.attributes)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['connection-usage'], position);
 
-// Interface Definition and Usage
 export const createInterfaceDefinitionNode = (
-  spec: SysMLInterfaceDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.interface-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'interface-definition'),
-    elementKind: 'definition',
-    compartments: [
-      portsToCompartment(spec.ports),
-      propertiesToItems('attributes', spec.attributes)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['interface-definition'], position);
 
 export const createInterfaceUsageNode = (
-  spec: SysMLInterfaceUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.interface-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'interface-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      stringsToCompartment('ports', spec.connectedPorts)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['interface-usage'], position);
 
-// Allocation Definition and Usage
 export const createAllocationDefinitionNode = (
-  spec: SysMLAllocationDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.allocation-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'allocation-definition'),
-    elementKind: 'definition',
-    compartments: [
-      spec.source ? buildCompartment('source', [{ label: spec.source }]) : undefined,
-      spec.target ? buildCompartment('target', [{ label: spec.target }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['allocation-definition'], position);
 
 export const createAllocationUsageNode = (
-  spec: SysMLAllocationUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.allocation-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'allocation-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      spec.allocatedFrom ? buildCompartment('from', [{ label: spec.allocatedFrom }]) : undefined,
-      spec.allocatedTo ? buildCompartment('to', [{ label: spec.allocatedTo }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['allocation-usage'], position);
 
-// Reference Usage
 export const createReferenceUsageNode = (
-  spec: SysMLReferenceUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.reference-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'reference-usage'),
-    elementKind: 'usage',
-    redefines: spec.redefines,
-    compartments: [
-      spec.referencedElement ? buildCompartment('references', [{ label: spec.referencedElement }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['reference-usage'], position);
 
-// Occurrence Definition and Usage
 export const createOccurrenceDefinitionNode = (
-  spec: SysMLOccurrenceDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.occurrence-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'occurrence-definition'),
-    elementKind: 'definition',
-    compartments: [
-      spec.lifeClass ? buildCompartment('lifeClass', [{ label: spec.lifeClass }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['occurrence-definition'], position);
 
 export const createOccurrenceUsageNode = (
-  spec: SysMLOccurrenceUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.occurrence-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'occurrence-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      spec.portionOf ? buildCompartment('portionOf', [{ label: spec.portionOf }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['occurrence-usage'], position);
 
-// Calculation Definition and Usage
 export const createCalculationDefinitionNode = (
-  spec: SysMLCalculationDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.calculation-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'calculation-definition'),
-    elementKind: 'definition',
-    emphasis: spec.expression,
-    compartments: [
-      propertiesToItems('inputs', spec.inputs),
-      propertiesToItems('outputs', spec.outputs),
-      spec.returnResult ? buildCompartment('return', [{ label: spec.returnResult }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['calculation-definition'], position);
 
 export const createCalculationUsageNode = (
-  spec: SysMLCalculationUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.calculation-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'calculation-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    emphasis: spec.calculationBody,
-    compartments: [
-      propertiesToItems('inputs', spec.inputs),
-      propertiesToItems('outputs', spec.outputs)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['calculation-usage'], position);
 
-// Advanced Action Types
 export const createPerformActionNode = (
-  spec: SysMLPerformActionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.perform-action',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'perform-action'),
-    compartments: [
-      spec.performedAction ? buildCompartment('performs', [{ label: spec.performedAction }]) : undefined,
-      propertiesToItems('inputs', spec.inputs),
-      propertiesToItems('outputs', spec.outputs)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['perform-action'], position);
 
 export const createSendActionNode = (
-  spec: SysMLSendActionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.send-action',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'send-action'),
-    compartments: [
-      spec.payload ? buildCompartment('payload', [{ label: spec.payload }]) : undefined,
-      spec.target ? buildCompartment('to', [{ label: spec.target }]) : undefined,
-      spec.via ? buildCompartment('via', [{ label: spec.via }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['send-action'], position);
 
 export const createAcceptActionNode = (
-  spec: SysMLAcceptActionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.accept-action',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'accept-action'),
-    compartments: [
-      spec.payloadType ? buildCompartment('accepts', [{ label: spec.payloadType }]) : undefined,
-      spec.via ? buildCompartment('via', [{ label: spec.via }]) : undefined,
-      spec.receiver ? buildCompartment('receiver', [{ label: spec.receiver }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['accept-action'], position);
 
 export const createAssignmentActionNode = (
-  spec: SysMLAssignmentActionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.assignment-action',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'assignment-action'),
-    compartments: [
-      spec.targetFeature ? buildCompartment('target', [{ label: spec.targetFeature }]) : undefined,
-      spec.valueExpression ? buildCompartment('value', [{ label: spec.valueExpression }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['assignment-action'], position);
 
 export const createIfActionNode = (
-  spec: SysMLIfActionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.if-action',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'if-action'),
-    compartments: [
-      spec.condition ? buildCompartment('if', [{ label: spec.condition }]) : undefined,
-      spec.thenAction ? buildCompartment('then', [{ label: spec.thenAction }]) : undefined,
-      spec.elseAction ? buildCompartment('else', [{ label: spec.elseAction }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['if-action'], position);
 
 export const createForLoopActionNode = (
-  spec: SysMLForLoopActionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.for-loop-action',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'for-loop-action'),
-    compartments: [
-      spec.variable ? buildCompartment('var', [{ label: spec.variable }]) : undefined,
-      spec.collection ? buildCompartment('in', [{ label: spec.collection }]) : undefined,
-      spec.body ? buildCompartment('do', [{ label: spec.body }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['for-loop-action'], position);
 
 export const createWhileLoopActionNode = (
-  spec: SysMLWhileLoopActionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.while-loop-action',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'while-loop-action'),
-    compartments: [
-      spec.condition ? buildCompartment('while', [{ label: spec.condition }]) : undefined,
-      spec.body ? buildCompartment('do', [{ label: spec.body }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['while-loop-action'], position);
 
-// State Definition and Usage
 export const createStateDefinitionNode = (
-  spec: SysMLStateDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.state-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'state-definition'),
-    elementKind: 'definition',
-    compartments: [
-      stringsToCompartment('substates', spec.substates)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['state-definition'], position);
 
 export const createStateUsageNode = (
-  spec: SysMLStateUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.state-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'state-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      spec.entryAction ? buildCompartment('entry', [{ label: spec.entryAction }]) : undefined,
-      spec.doAction ? buildCompartment('do', [{ label: spec.doAction }]) : undefined,
-      spec.exitAction ? buildCompartment('exit', [{ label: spec.exitAction }]) : undefined,
-      stringsToCompartment('substates', spec.substates)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['state-usage'], position);
 
 export const createTransitionUsageNode = (
-  spec: SysMLTransitionUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.transition-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'transition-usage'),
-    compartments: [
-      spec.trigger ? buildCompartment('trigger', [{ label: spec.trigger }]) : undefined,
-      spec.guard ? buildCompartment('guard', [{ label: spec.guard }]) : undefined,
-      spec.effect ? buildCompartment('effect', [{ label: spec.effect }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['transition-usage'], position);
 
 export const createExhibitStateNode = (
-  spec: SysMLExhibitStateSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.exhibit-state',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'exhibit-state'),
-    compartments: [
-      spec.exhibitedState ? buildCompartment('state', [{ label: spec.exhibitedState }]) : undefined,
-      spec.performer ? buildCompartment('performer', [{ label: spec.performer }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['exhibit-state'], position);
 
-// Requirement Definition and Usage
 export const createRequirementDefinitionNode = (
-  spec: SysMLRequirementDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.requirement-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'requirement-definition'),
-    elementKind: 'definition',
-    compartments: [
-      spec.text ? buildCompartment('text', [{ label: spec.text }]) : undefined,
-      spec.reqId ? buildCompartment('id', [{ label: spec.reqId }]) : undefined,
-      stringsToCompartment('assume', spec.assumeConstraint),
-      stringsToCompartment('require', spec.requireConstraint),
-      stringsToCompartment('concerns', spec.framedConcerns),
-      stringsToCompartment('actors', spec.actors)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['requirement-definition'], position);
 
 export const createRequirementUsageNode = (
-  spec: SysMLRequirementUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.requirement-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'requirement-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    status: spec.status,
-    compartments: [
-      spec.text ? buildCompartment('text', [{ label: spec.text }]) : undefined,
-      spec.reqId ? buildCompartment('id', [{ label: spec.reqId }]) : undefined,
-      stringsToCompartment('assume', spec.assumeConstraint),
-      stringsToCompartment('require', spec.requireConstraint)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['requirement-usage'], position);
 
-// Constraint Definition and Usage
 export const createConstraintDefinitionNode = (
-  spec: SysMLConstraintDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.constraint-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'constraint-definition'),
-    elementKind: 'definition',
-    emphasis: spec.expression,
-    compartments: []
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['constraint-definition'], position);
 
 export const createConstraintUsageNode = (
-  spec: SysMLConstraintUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.constraint-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'constraint-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    emphasis: spec.expression,
-    compartments: []
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['constraint-usage'], position);
 
-// Verification Case Definition and Usage
 export const createVerificationCaseDefinitionNode = (
-  spec: SysMLVerificationCaseDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.verification-case-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'verification-case-definition'),
-    elementKind: 'definition',
-    compartments: [
-      spec.verifiedRequirement ? buildCompartment('verifies', [{ label: spec.verifiedRequirement }]) : undefined,
-      spec.objectiveRequirement ? buildCompartment('objective', [{ label: spec.objectiveRequirement }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['verification-case-definition'], position);
 
 export const createVerificationCaseUsageNode = (
-  spec: SysMLVerificationCaseUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.verification-case-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'verification-case-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    status: spec.status,
-    compartments: [
-      spec.verifiedRequirement ? buildCompartment('verifies', [{ label: spec.verifiedRequirement }]) : undefined,
-      spec.verificationMethod ? buildCompartment('method', [{ label: spec.verificationMethod }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['verification-case-usage'], position);
 
-// Analysis Case Definition and Usage
 export const createAnalysisCaseDefinitionNode = (
-  spec: SysMLAnalysisCaseDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.analysis-case-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'analysis-case-definition'),
-    elementKind: 'definition',
-    compartments: [
-      spec.analysisAction ? buildCompartment('action', [{ label: spec.analysisAction }]) : undefined,
-      spec.resultExpression ? buildCompartment('result', [{ label: spec.resultExpression }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['analysis-case-definition'], position);
 
 export const createAnalysisCaseUsageNode = (
-  spec: SysMLAnalysisCaseUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.analysis-case-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'analysis-case-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      spec.analysisAction ? buildCompartment('action', [{ label: spec.analysisAction }]) : undefined,
-      spec.resultExpression ? buildCompartment('result', [{ label: spec.resultExpression }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['analysis-case-usage'], position);
 
-// Use Case Definition and Usage
 export const createUseCaseDefinitionNode = (
-  spec: SysMLUseCaseDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.use-case-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'use-case-definition'),
-    elementKind: 'definition',
-    compartments: [
-      stringsToCompartment('includes', spec.includedUseCases),
-      spec.objectiveRequirement ? buildCompartment('objective', [{ label: spec.objectiveRequirement }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['use-case-definition'], position);
 
 export const createUseCaseUsageNode = (
-  spec: SysMLUseCaseUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.use-case-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'use-case-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    status: spec.status,
-    compartments: [
-      stringsToCompartment('actors', spec.actors),
-      stringsToCompartment('includes', spec.includes),
-      stringsToCompartment('extends', spec.extends)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['use-case-usage'], position);
 
-// Concern Definition and Usage
 export const createConcernDefinitionNode = (
-  spec: SysMLConcernDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.concern-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'concern-definition'),
-    elementKind: 'definition',
-    compartments: [
-      spec.text ? buildCompartment('text', [{ label: spec.text }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['concern-definition'], position);
 
 export const createConcernUsageNode = (
-  spec: SysMLConcernUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.concern-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'concern-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      spec.text ? buildCompartment('text', [{ label: spec.text }]) : undefined,
-      stringsToCompartment('stakeholders', spec.stakeholders)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['concern-usage'], position);
 
-// Package and Library Package
 export const createPackageNode = (
-  spec: SysMLPackageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.package',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'package'),
-    compartments: [
-      stringsToCompartment('members', spec.members),
-      stringsToCompartment('imports', spec.imports)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['package'], position);
 
 export const createLibraryPackageNode = (
-  spec: SysMLLibraryPackageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.library-package',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'library-package'),
-    compartments: [
-      stringsToCompartment('members', spec.members)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['library-package'], position);
 
-// Interaction
 export const createInteractionNode = (
-  spec: SysMLInteractionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.interaction',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'interaction'),
-    compartments: [
-      stringsToCompartment('participants', spec.participants),
-      stringsToCompartment('messages', spec.messages)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['interaction'], position);
 
-// Metadata
 export const createMetadataDefinitionNode = (
-  spec: SysMLMetadataDefinitionSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.metadata-definition',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'metadata-definition'),
-    elementKind: 'definition',
-    compartments: [
-      spec.baseType ? buildCompartment('baseType', [{ label: spec.baseType }]) : undefined,
-      propertiesToItems('attributes', spec.attributes)
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['metadata-definition'], position);
 
 export const createMetadataUsageNode = (
-  spec: SysMLMetadataUsageSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.metadata-usage',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    ...withBaseData(spec, 'metadata-usage'),
-    elementKind: 'usage',
-    baseDefinition: spec.definition,
-    compartments: [
-      spec.annotatedElement ? buildCompartment('annotates', [{ label: spec.annotatedElement }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['metadata-usage'], position);
 
 export const createCommentNode = (
-  spec: SysMLCommentSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.comment',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    id: spec.id,
-    name: 'Comment',
-    kind: 'comment',
-    documentation: spec.body,
-    compartments: [
-      spec.annotatedElement ? buildCompartment('annotates', [{ label: spec.annotatedElement }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['comment'], position);
 
 export const createDocumentationNode = (
-  spec: SysMLDocumentationSpec,
+  spec: any,
   position?: Partial<XYPosition>
-): SysMLReactFlowNode => ({
-  id: spec.id,
-  type: 'sysml.documentation',
-  position: normalizePosition(position),
-  draggable: true,
-  selectable: true,
-  connectable: true,
-  data: {
-    id: spec.id,
-    name: 'Documentation',
-    kind: 'documentation',
-    documentation: spec.body,
-    compartments: [
-      spec.documentedElement ? buildCompartment('documents', [{ label: spec.documentedElement }]) : undefined
-    ].filter(Boolean) as SysMLCompartment[]
-  }
-});
+): SysMLReactFlowNode => createGenericNode(spec, NODE_CONFIGS['documentation'], position);
 
 export const createNodesFromSpecs = (
   specs: SysMLNodeSpec[],
@@ -1374,124 +1082,12 @@ export const createNodesFromSpecs = (
     const fallback = { x: (index % 3) * 320, y: Math.floor(index / 3) * 260 };
     const position = positions[descriptor.spec.id] ?? fallback;
 
-    switch (descriptor.kind) {
-      // Structural Elements
-      case 'part-definition':
-        return createPartDefinitionNode(descriptor.spec, position);
-      case 'part-usage':
-        return createPartUsageNode(descriptor.spec, position);
-      case 'attribute-definition':
-        return createAttributeDefinitionNode(descriptor.spec, position);
-      case 'attribute-usage':
-        return createAttributeUsageNode(descriptor.spec, position);
-      case 'port-definition':
-        return createPortDefinitionNode(descriptor.spec, position);
-      case 'port-usage':
-        return createPortUsageNode(descriptor.spec, position);
-      case 'item-definition':
-        return createItemDefinitionNode(descriptor.spec, position);
-      case 'item-usage':
-        return createItemUsageNode(descriptor.spec, position);
-      case 'connection-definition':
-        return createConnectionDefinitionNode(descriptor.spec, position);
-      case 'connection-usage':
-        return createConnectionUsageNode(descriptor.spec, position);
-      case 'interface-definition':
-        return createInterfaceDefinitionNode(descriptor.spec, position);
-      case 'interface-usage':
-        return createInterfaceUsageNode(descriptor.spec, position);
-      case 'allocation-definition':
-        return createAllocationDefinitionNode(descriptor.spec, position);
-      case 'allocation-usage':
-        return createAllocationUsageNode(descriptor.spec, position);
-      case 'reference-usage':
-        return createReferenceUsageNode(descriptor.spec, position);
-      case 'occurrence-definition':
-        return createOccurrenceDefinitionNode(descriptor.spec, position);
-      case 'occurrence-usage':
-        return createOccurrenceUsageNode(descriptor.spec, position);
-      // Behavioral Elements
-      case 'action-definition':
-        return createActionDefinitionNode(descriptor.spec, position);
-      case 'action-usage':
-        return createActionUsageNode(descriptor.spec, position);
-      case 'activity-control':
-        return createActivityControlNode(descriptor.spec, position);
-      case 'calculation-definition':
-        return createCalculationDefinitionNode(descriptor.spec, position);
-      case 'calculation-usage':
-        return createCalculationUsageNode(descriptor.spec, position);
-      case 'perform-action':
-        return createPerformActionNode(descriptor.spec, position);
-      case 'send-action':
-        return createSendActionNode(descriptor.spec, position);
-      case 'accept-action':
-        return createAcceptActionNode(descriptor.spec, position);
-      case 'assignment-action':
-        return createAssignmentActionNode(descriptor.spec, position);
-      case 'if-action':
-        return createIfActionNode(descriptor.spec, position);
-      case 'for-loop-action':
-        return createForLoopActionNode(descriptor.spec, position);
-      case 'while-loop-action':
-        return createWhileLoopActionNode(descriptor.spec, position);
-      case 'state':
-        return createStateNode(descriptor.spec, position);
-      case 'state-machine':
-        return createStateMachineNode(descriptor.spec, position);
-      case 'state-definition':
-        return createStateDefinitionNode(descriptor.spec, position);
-      case 'state-usage':
-        return createStateUsageNode(descriptor.spec, position);
-      case 'transition-usage':
-        return createTransitionUsageNode(descriptor.spec, position);
-      case 'exhibit-state':
-        return createExhibitStateNode(descriptor.spec, position);
-      // Requirements & Cases
-      case 'requirement-definition':
-        return createRequirementDefinitionNode(descriptor.spec, position);
-      case 'requirement-usage':
-        return createRequirementUsageNode(descriptor.spec, position);
-      case 'constraint-definition':
-        return createConstraintDefinitionNode(descriptor.spec, position);
-      case 'constraint-usage':
-        return createConstraintUsageNode(descriptor.spec, position);
-      case 'verification-case-definition':
-        return createVerificationCaseDefinitionNode(descriptor.spec, position);
-      case 'verification-case-usage':
-        return createVerificationCaseUsageNode(descriptor.spec, position);
-      case 'analysis-case-definition':
-        return createAnalysisCaseDefinitionNode(descriptor.spec, position);
-      case 'analysis-case-usage':
-        return createAnalysisCaseUsageNode(descriptor.spec, position);
-      case 'use-case-definition':
-        return createUseCaseDefinitionNode(descriptor.spec, position);
-      case 'use-case-usage':
-        return createUseCaseUsageNode(descriptor.spec, position);
-      case 'concern-definition':
-        return createConcernDefinitionNode(descriptor.spec, position);
-      case 'concern-usage':
-        return createConcernUsageNode(descriptor.spec, position);
-      // Organizational
-      case 'package':
-        return createPackageNode(descriptor.spec, position);
-      case 'library-package':
-        return createLibraryPackageNode(descriptor.spec, position);
-      // Interactions
-      case 'sequence-lifeline':
-        return createSequenceLifelineNode(descriptor.spec, position);
-      case 'interaction':
-        return createInteractionNode(descriptor.spec, position);
-      // Metadata
-      case 'metadata-definition':
-        return createMetadataDefinitionNode(descriptor.spec, position);
-      case 'metadata-usage':
-        return createMetadataUsageNode(descriptor.spec, position);
-      case 'comment':
-        return createCommentNode(descriptor.spec, position);
-      case 'documentation':
-        return createDocumentationNode(descriptor.spec, position);
+    const config = NODE_CONFIGS[descriptor.kind];
+    if (!config) {
+      throw new Error(`Unknown node kind: ${descriptor.kind}`);
     }
+
+    return createGenericNode(descriptor.spec, config, position);
   });
 
 export const createEdgesFromRelationships = (

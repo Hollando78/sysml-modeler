@@ -285,31 +285,31 @@ const CompartmentList = ({ compartments }: { compartments?: SysMLCompartment[] }
 };
 
 const RequirementNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   return (
     <>
       <NodeChrome data={data}>
         <CompartmentList compartments={data.compartments} />
       </NodeChrome>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const BlockNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   return (
     <>
       <NodeChrome data={data}>
         <CompartmentList compartments={data.compartments} />
       </NodeChrome>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const ActivityNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   return (
     <>
       <NodeChrome data={data}>
@@ -318,13 +318,13 @@ const ActivityNode = memo((props: NodeProps<SysMLNodeData>) => {
         )}
         <CompartmentList compartments={data.compartments} />
       </NodeChrome>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const ParametricNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   return (
     <>
       <NodeChrome data={data}>
@@ -344,25 +344,25 @@ const ParametricNode = memo((props: NodeProps<SysMLNodeData>) => {
         )}
         <CompartmentList compartments={data.compartments} />
       </NodeChrome>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const DefinitionNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   return (
     <>
       <NodeChrome data={data}>
         <CompartmentList compartments={data.compartments} />
       </NodeChrome>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const UseCaseNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   const accent = accentByKind['use-case'];
   return (
     <>
@@ -394,13 +394,13 @@ const UseCaseNode = memo((props: NodeProps<SysMLNodeData>) => {
           <div style={{ fontSize: 12, marginTop: 8, opacity: 0.75 }}>{data.documentation}</div>
         )}
       </div>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const StateNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   return (
     <>
       <NodeChrome data={data}>
@@ -413,25 +413,25 @@ const StateNode = memo((props: NodeProps<SysMLNodeData>) => {
         </div>
         <CompartmentList compartments={data.compartments} />
       </NodeChrome>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const StateMachineNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   return (
     <>
       <NodeChrome data={data}>
         <CompartmentList compartments={data.compartments} />
       </NodeChrome>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const SequenceLifelineNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   const accent = accentByKind['sequence-lifeline'];
   return (
     <>
@@ -476,13 +476,13 @@ const SequenceLifelineNode = memo((props: NodeProps<SysMLNodeData>) => {
           />
         </div>
       </div>
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });
 
 const ActivityControlNode = memo((props: NodeProps<SysMLNodeData>) => {
-  const { data, connectable } = props;
+  const { data, isConnectable } = props;
   const type = data.controlType ?? 'decision';
   const accent = accentByKind['activity-control'];
   const isBar = type === 'fork' || type === 'join';
@@ -511,7 +511,7 @@ const ActivityControlNode = memo((props: NodeProps<SysMLNodeData>) => {
           }}
         />
       )}
-      <HiddenHandles connectable={connectable} />
+      <HiddenHandles connectable={isConnectable} />
     </>
   );
 });

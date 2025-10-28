@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
-import { applyNodeChanges, applyEdgeChanges } from 'reactflow';
+import { useEffect, useState, useCallback } from 'react';
+import { applyNodeChanges, applyEdgeChanges, ConnectionLineType } from 'reactflow';
 import { SysMLDiagram, createNodesFromSpecs, createEdgesFromRelationships } from '../../lib/sysml-diagram';
+import type { SysMLNodeSpec as LibSysMLNodeSpec, SysMLRelationshipSpec as LibSysMLRelationshipSpec } from '../../lib/sysml-diagram/types';
 import { useSysMLModel, useSysMLMutations, useDiagramMutations, useSysMLDiagram } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
 import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect } from 'reactflow';
@@ -63,8 +64,8 @@ export default function SysMLCanvas({ toolbarMode, toolbarData }: SysMLCanvasPro
       // Use positions from the diagram
       const positions = activeDiagram.positions;
 
-      const reactFlowNodes = createNodesFromSpecs(filteredNodes, positions);
-      const reactFlowEdges = createEdgesFromRelationships(model.relationships);
+      const reactFlowNodes = createNodesFromSpecs(filteredNodes as LibSysMLNodeSpec[], positions);
+      const reactFlowEdges = createEdgesFromRelationships(model.relationships as LibSysMLRelationshipSpec[]);
 
       console.log('[DEBUG] Created React Flow nodes', {
         nodeCount: reactFlowNodes.length,
@@ -133,7 +134,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData }: SysMLCanvasPro
           try {
             // 1. Create the element first
             await elementMutations.createElement.mutateAsync({
-              kind: toolbarData.kind,
+              kind: toolbarData.kind!,
               spec: {
                 id,
                 name,
@@ -166,7 +167,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData }: SysMLCanvasPro
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     console.log('[DEBUG] onNodesChange triggered', {
       changeCount: changes.length,
-      changes: changes.map(c => ({ type: c.type, id: c.id, dragging: c.dragging, position: c.position }))
+      changes: changes.map(c => ({ type: c.type, ...(('id' in c) && { id: c.id }) }))
     });
 
     setNodes((nds) => {
@@ -240,7 +241,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData }: SysMLCanvasPro
     [toolbarMode, toolbarData, elementMutations]
   );
 
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     console.log('[DEBUG] Node clicked!', {
       nodeId: node.id,
       nodeType: node.type,
@@ -297,7 +298,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData }: SysMLCanvasPro
         nodesConnectable={toolbarMode === 'create-relationship'}
         elementsSelectable={true}
         panOnDrag={toolbarMode !== 'create-relationship'}
-        connectionLineType="straight"
+        connectionLineType={ConnectionLineType.Straight}
         connectionLineStyle={{
           stroke: '#8d8d8d',
           strokeWidth: 2,
