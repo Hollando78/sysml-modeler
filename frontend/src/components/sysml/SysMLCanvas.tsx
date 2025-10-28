@@ -27,7 +27,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
   const elementMutations = useSysMLMutations();
   const diagramMutations = useDiagramMutations();
-  const { undo, redo, canUndo, canRedo } = useUndoRedo();
+  const { addAction, undo, redo, canUndo, canRedo } = useUndoRedo();
 
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -169,13 +169,44 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
             });
 
             console.log('[DEBUG] Element created and added to diagram successfully');
+
+            // 4. Add undo/redo action
+            addAction({
+              type: 'create-node',
+              data: { id, kind: toolbarData.kind, name, position: { x: defaultX, y: defaultY }, diagramId: activeDiagram.id },
+              description: `Create ${toolbarData.kind} "${name}"`,
+              undo: async () => {
+                // Remove from diagram and delete element
+                await diagramMutations.removeElementFromDiagram.mutateAsync({
+                  diagramId: activeDiagram.id,
+                  elementId: id,
+                });
+                await elementMutations.deleteElement.mutateAsync(id);
+              },
+              redo: async () => {
+                // Recreate element and add to diagram
+                await elementMutations.createElement.mutateAsync({
+                  kind: toolbarData.kind!,
+                  spec: { id, name },
+                });
+                await diagramMutations.addElementsToDiagram.mutateAsync({
+                  diagramId: activeDiagram.id,
+                  elementIds: [id],
+                });
+                await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+                  diagramId: activeDiagram.id,
+                  elementId: id,
+                  position: { x: defaultX, y: defaultY },
+                });
+              },
+            });
           } catch (error) {
             console.error('[DEBUG] Error creating element:', error);
           }
         })();
       }
     },
-    [toolbarMode, toolbarData, activeDiagram, elementMutations, diagramMutations]
+    [toolbarMode, toolbarData, activeDiagram, elementMutations, diagramMutations, addAction]
   );
 
   const onNodesChange: OnNodesChange = useCallback((changes) => {
@@ -185,6 +216,67 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     });
 
     setNodes((nds) => {
+      // Handle node removal (delete key)
+      changes.forEach((change) => {
+        if (change.type === 'remove') {
+          const nodeToRemove = nds.find(n => n.id === change.id);
+          if (nodeToRemove && activeDiagram?.id) {
+            const nodeData = nodeToRemove.data;
+            const nodePosition = nodeToRemove.position;
+
+            console.log('[DEBUG] Node removal detected', {
+              id: change.id,
+              nodeData,
+              position: nodePosition,
+            });
+
+            // Remove from diagram and delete element
+            (async () => {
+              try {
+                await diagramMutations.removeElementFromDiagram.mutateAsync({
+                  diagramId: activeDiagram.id,
+                  elementId: change.id,
+                });
+                await elementMutations.deleteElement.mutateAsync(change.id);
+
+                // Add undo/redo action
+                addAction({
+                  type: 'delete-node',
+                  data: { id: change.id, nodeData, position: nodePosition, diagramId: activeDiagram.id },
+                  description: `Delete node ${change.id}`,
+                  undo: async () => {
+                    // Recreate element and add to diagram
+                    await elementMutations.createElement.mutateAsync({
+                      kind: nodeData.kind,
+                      spec: { id: change.id, name: nodeData.name },
+                    });
+                    await diagramMutations.addElementsToDiagram.mutateAsync({
+                      diagramId: activeDiagram.id,
+                      elementIds: [change.id],
+                    });
+                    await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+                      diagramId: activeDiagram.id,
+                      elementId: change.id,
+                      position: nodePosition,
+                    });
+                  },
+                  redo: async () => {
+                    // Delete element again
+                    await diagramMutations.removeElementFromDiagram.mutateAsync({
+                      diagramId: activeDiagram.id,
+                      elementId: change.id,
+                    });
+                    await elementMutations.deleteElement.mutateAsync(change.id);
+                  },
+                });
+              } catch (error) {
+                console.error('[DEBUG] Error deleting node:', error);
+              }
+            })();
+          }
+        }
+      });
+
       // Apply all React Flow changes (select, drag, remove, etc.)
       const updatedNodes = applyNodeChanges(changes, nds);
 
@@ -198,18 +290,44 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         if (change.type === 'position' && change.dragging === false) {
           // Find the updated node to get its new position
           const updatedNode = updatedNodes.find(n => n.id === change.id);
+          const oldNode = nds.find(n => n.id === change.id);
 
-          if (updatedNode && activeDiagram?.id) {
+          if (updatedNode && oldNode && activeDiagram?.id) {
+            const oldPosition = oldNode.position;
+            const newPosition = updatedNode.position;
+
             console.log('[DEBUG] Position change detected, saving to diagram', {
               id: change.id,
-              position: updatedNode.position,
+              oldPosition,
+              newPosition,
               diagramId: activeDiagram.id,
             });
 
             diagramMutations.updateElementPositionInDiagram.mutate({
               diagramId: activeDiagram.id,
               elementId: change.id,
-              position: updatedNode.position,
+              position: newPosition,
+            });
+
+            // Add undo/redo action for position change
+            addAction({
+              type: 'move-node',
+              data: { id: change.id, oldPosition, newPosition, diagramId: activeDiagram.id },
+              description: `Move node ${change.id}`,
+              undo: async () => {
+                await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+                  diagramId: activeDiagram.id,
+                  elementId: change.id,
+                  position: oldPosition,
+                });
+              },
+              redo: async () => {
+                await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+                  diagramId: activeDiagram.id,
+                  elementId: change.id,
+                  position: newPosition,
+                });
+              },
             });
           } else {
             console.log('[DEBUG] NOT saving position', {
@@ -223,11 +341,63 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
       return updatedNodes;
     });
-  }, [activeDiagram, diagramMutations]);
+  }, [activeDiagram, diagramMutations, addAction]);
 
   const onEdgesChange: OnEdgesChange = useCallback((changes) => {
-    setEdges((eds) => applyEdgeChanges(changes, eds));
-  }, []);
+    setEdges((eds) => {
+      // Handle edge removal
+      changes.forEach((change) => {
+        if (change.type === 'remove') {
+          const edgeToRemove = eds.find(e => e.id === change.id);
+          if (edgeToRemove) {
+            console.log('[DEBUG] Edge removal detected', {
+              id: change.id,
+              edgeData: edgeToRemove,
+            });
+
+            // Delete relationship
+            (async () => {
+              try {
+                await elementMutations.deleteRelationship.mutateAsync(change.id);
+
+                // Add undo/redo action
+                addAction({
+                  type: 'delete-edge',
+                  data: {
+                    id: change.id,
+                    source: edgeToRemove.source,
+                    target: edgeToRemove.target,
+                    type: edgeToRemove.data?.type || edgeToRemove.label,
+                    label: edgeToRemove.label,
+                  },
+                  description: `Delete edge ${change.id}`,
+                  undo: async () => {
+                    // Recreate relationship
+                    const label = typeof edgeToRemove.label === 'string' ? edgeToRemove.label : undefined;
+                    await elementMutations.createRelationship.mutateAsync({
+                      id: change.id,
+                      source: edgeToRemove.source,
+                      target: edgeToRemove.target,
+                      type: edgeToRemove.data?.type || label || 'dependency',
+                      label: label,
+                    });
+                  },
+                  redo: async () => {
+                    // Delete relationship again
+                    await elementMutations.deleteRelationship.mutateAsync(change.id);
+                  },
+                });
+              } catch (error) {
+                console.error('[DEBUG] Error deleting edge:', error);
+              }
+            })();
+          }
+        }
+      });
+
+      return applyEdgeChanges(changes, eds);
+    });
+  }, [elementMutations, addAction]);
 
   const onConnect: OnConnect = useCallback(
     (connection) => {
@@ -243,16 +413,37 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
           target: connection.target
         });
 
-        elementMutations.createRelationship.mutate({
+        const relationshipSpec = {
           id,
           type: toolbarData.type,
           source: connection.source,
           target: connection.target,
           label: toolbarData.type,
-        });
+        };
+
+        (async () => {
+          try {
+            await elementMutations.createRelationship.mutateAsync(relationshipSpec);
+
+            // Add undo/redo action
+            addAction({
+              type: 'create-edge',
+              data: relationshipSpec,
+              description: `Create ${toolbarData.type} relationship`,
+              undo: async () => {
+                await elementMutations.deleteRelationship.mutateAsync(id);
+              },
+              redo: async () => {
+                await elementMutations.createRelationship.mutateAsync(relationshipSpec);
+              },
+            });
+          } catch (error) {
+            console.error('[DEBUG] Error creating relationship:', error);
+          }
+        })();
       }
     },
-    [toolbarMode, toolbarData, elementMutations]
+    [toolbarMode, toolbarData, elementMutations, addAction]
   );
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
