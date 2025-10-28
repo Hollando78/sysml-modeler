@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { X, Plus, Trash2 } from 'lucide-react';
 import { useSysMLModel, useDiagramMutations } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
 
@@ -61,7 +62,7 @@ export default function DiagramManager({ onClose }: DiagramManagerProps) {
         <div style={styles.header}>
           <h2 style={styles.title}>Manage Diagram: {selectedDiagram.name}</h2>
           <button style={styles.closeButton} onClick={onClose}>
-            ×
+            <X size={24} />
           </button>
         </div>
 
@@ -84,7 +85,8 @@ export default function DiagramManager({ onClose }: DiagramManagerProps) {
                       onClick={() => handleRemoveElement(node.spec.id)}
                       disabled={removeElementFromDiagram.isPending}
                     >
-                      Remove
+                      <Trash2 size={14} style={styles.buttonIcon} />
+                      <span>Remove</span>
                     </button>
                   </div>
                 ))
@@ -120,9 +122,12 @@ export default function DiagramManager({ onClose }: DiagramManagerProps) {
                 onClick={handleAddElements}
                 disabled={selectedElements.length === 0 || addElementsToDiagram.isPending}
               >
-                {addElementsToDiagram.isPending
-                  ? 'Adding...'
-                  : `Add ${selectedElements.length} element(s)`}
+                <Plus size={16} style={styles.buttonIcon} />
+                <span>
+                  {addElementsToDiagram.isPending
+                    ? 'Adding...'
+                    : `Add ${selectedElements.length} element(s)`}
+                </span>
               </button>
             )}
           </div>
@@ -170,10 +175,13 @@ const styles: Record<string, React.CSSProperties> = {
   closeButton: {
     background: 'none',
     border: 'none',
-    fontSize: '32px',
     cursor: 'pointer',
     color: '#666',
     lineHeight: 1,
+    padding: '4px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   content: {
     padding: '24px',
@@ -217,6 +225,9 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     flex: 1,
   },
+  buttonIcon: {
+    flexShrink: 0,
+  },
   removeButton: {
     padding: '4px 12px',
     fontSize: '13px',
@@ -227,6 +238,9 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'white',
     color: '#dc3545',
     cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
   },
   addButton: {
     padding: '8px 16px',
@@ -240,6 +254,9 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontWeight: 600,
     alignSelf: 'flex-start',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
   },
   empty: {
     padding: '24px',

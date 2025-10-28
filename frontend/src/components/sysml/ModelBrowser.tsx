@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
+import { ChevronRight, ChevronDown, Search } from 'lucide-react';
 import { useSysMLModel } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
+import { getNodeIcon } from '../../lib/sysml-diagram/icon-mappings';
 import type { SysMLNodeSpec } from '../../types';
 
 export default function ModelBrowser() {
@@ -69,13 +71,16 @@ export default function ModelBrowser() {
     <div style={styles.container}>
       <div style={styles.header}>
         <h3 style={styles.title}>Model Browser</h3>
-        <input
-          type="text"
-          placeholder="Search elements..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={styles.searchInput}
-        />
+        <div style={styles.searchContainer}>
+          <Search size={14} style={styles.searchIcon} />
+          <input
+            type="text"
+            placeholder="Search elements..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={styles.searchInput}
+          />
+        </div>
       </div>
 
       <div style={styles.content}>
@@ -88,10 +93,16 @@ export default function ModelBrowser() {
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([kind, nodes]) => {
               const isExpanded = expandedKinds.has(kind);
+              const KindIcon = getNodeIcon(kind);
               return (
                 <div key={kind} style={styles.group}>
                   <div style={styles.groupHeader} onClick={() => toggleKind(kind)}>
-                    <span style={styles.expandIcon}>{isExpanded ? '▼' : '▶'}</span>
+                    {isExpanded ? (
+                      <ChevronDown size={14} style={styles.expandIcon} />
+                    ) : (
+                      <ChevronRight size={14} style={styles.expandIcon} />
+                    )}
+                    <KindIcon size={14} style={styles.kindIcon} />
                     <span style={styles.groupTitle}>
                       {formatKind(kind)} ({nodes.length})
                     </span>
@@ -139,9 +150,20 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     marginBottom: '8px',
   },
+  searchContainer: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  searchIcon: {
+    position: 'absolute',
+    left: '8px',
+    color: '#999',
+    pointerEvents: 'none',
+  },
   searchInput: {
     width: '100%',
-    padding: '6px 8px',
+    padding: '6px 8px 6px 28px',
     fontSize: '13px',
     border: '1px solid #ccc',
     borderRadius: '4px',
@@ -170,9 +192,14 @@ const styles: Record<string, React.CSSProperties> = {
     userSelect: 'none',
   },
   expandIcon: {
-    width: '16px',
-    fontSize: '10px',
+    flexShrink: 0,
+    marginRight: '4px',
+    color: '#666',
+  },
+  kindIcon: {
+    flexShrink: 0,
     marginRight: '6px',
+    color: '#007bff',
   },
   groupTitle: {
     fontSize: '13px',

@@ -1,5 +1,7 @@
+import React from 'react';
 import { useViewpointTypes } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
+import { getNodeIcon, getEdgeIcon, uiActionIcons } from '../../lib/sysml-diagram/icon-mappings';
 
 export type ToolbarMode = 'select' | 'create-node' | 'create-relationship';
 
@@ -48,21 +50,26 @@ export default function SysMLToolbar({ onModeChange, currentMode }: SysMLToolbar
             onClick={() => onModeChange('select')}
             title="Select and move elements"
           >
-            Select
+            {React.createElement(uiActionIcons.select, { size: 16, style: styles.icon })}
+            <span>Select</span>
           </button>
-          {types.nodeKinds.map((kind) => (
-            <button
-              key={kind}
-              style={{
-                ...styles.button,
-                ...(currentMode === 'create-node' ? styles.buttonActive : {}),
-              }}
-              onClick={() => onModeChange('create-node', { kind })}
-              title={`Create ${formatKind(kind)}`}
-            >
-              {formatKind(kind)}
-            </button>
-          ))}
+          {types.nodeKinds.map((kind) => {
+            const Icon = getNodeIcon(kind);
+            return (
+              <button
+                key={kind}
+                style={{
+                  ...styles.button,
+                  ...(currentMode === 'create-node' ? styles.buttonActive : {}),
+                }}
+                onClick={() => onModeChange('create-node', { kind })}
+                title={`Create ${formatKind(kind)}`}
+              >
+                <Icon size={16} style={styles.icon} />
+                <span>{formatKind(kind)}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -70,19 +77,23 @@ export default function SysMLToolbar({ onModeChange, currentMode }: SysMLToolbar
         <div style={styles.section}>
           <div style={styles.sectionTitle}>Relationships</div>
           <div style={styles.buttonGroup}>
-            {types.edgeKinds.map((type) => (
-              <button
-                key={type}
-                style={{
-                  ...styles.button,
-                  ...(currentMode === 'create-relationship' ? styles.buttonActive : {}),
-                }}
-                onClick={() => onModeChange('create-relationship', { type })}
-                title={`Create ${formatKind(type)} relationship`}
-              >
-                {formatKind(type)}
-              </button>
-            ))}
+            {types.edgeKinds.map((type) => {
+              const Icon = getEdgeIcon(type);
+              return (
+                <button
+                  key={type}
+                  style={{
+                    ...styles.button,
+                    ...(currentMode === 'create-relationship' ? styles.buttonActive : {}),
+                  }}
+                  onClick={() => onModeChange('create-relationship', { type })}
+                  title={`Create ${formatKind(type)} relationship`}
+                >
+                  <Icon size={16} style={styles.icon} />
+                  <span>{formatKind(type)}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -130,6 +141,12 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'white',
     cursor: 'pointer',
     transition: 'all 0.2s',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  icon: {
+    flexShrink: 0,
   },
   buttonActive: {
     backgroundColor: '#007bff',
