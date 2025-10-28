@@ -4,15 +4,18 @@ import { SysMLDiagram, createNodesFromSpecs, createEdgesFromRelationships } from
 import type { SysMLNodeSpec as LibSysMLNodeSpec, SysMLRelationshipSpec as LibSysMLRelationshipSpec } from '../../lib/sysml-diagram/types';
 import { useSysMLModel, useSysMLMutations, useDiagramMutations, useSysMLDiagram } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
+import { useUndoRedo } from '../../hooks/useUndoRedo';
 import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect } from 'reactflow';
 import type { ToolbarMode } from './SysMLToolbar';
 
 interface SysMLCanvasProps {
   toolbarMode: ToolbarMode;
   toolbarData?: { kind?: string; type?: string };
+  onUndoRedoChange?: (canUndo: boolean, canRedo: boolean) => void;
+  undoRedoRef?: (undo: () => void, redo: () => void) => void;
 }
 
-export default function SysMLCanvas({ toolbarMode, toolbarData }: SysMLCanvasProps) {
+export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange, undoRedoRef }: SysMLCanvasProps) {
   const { selectedDiagram } = useDiagram();
   const { data: latestDiagram, isLoading: diagramLoading } = useSysMLDiagram(selectedDiagram?.id);
 
@@ -24,9 +27,20 @@ export default function SysMLCanvas({ toolbarMode, toolbarData }: SysMLCanvasPro
 
   const elementMutations = useSysMLMutations();
   const diagramMutations = useDiagramMutations();
+  const { undo, redo, canUndo, canRedo } = useUndoRedo();
 
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+
+  // Notify parent of undo/redo state changes
+  useEffect(() => {
+    onUndoRedoChange?.(canUndo, canRedo);
+  }, [canUndo, canRedo, onUndoRedoChange]);
+
+  // Expose undo/redo functions to parent
+  useEffect(() => {
+    undoRedoRef?.(undo, redo);
+  }, [undo, redo, undoRedoRef]);
 
   console.log('[DEBUG] SysMLCanvas render', {
     toolbarMode,

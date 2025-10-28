@@ -8,9 +8,13 @@ export type ToolbarMode = 'select' | 'create-node' | 'create-relationship';
 interface SysMLToolbarProps {
   onModeChange: (mode: ToolbarMode, data?: { kind?: string; type?: string }) => void;
   currentMode: ToolbarMode;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
-export default function SysMLToolbar({ onModeChange, currentMode }: SysMLToolbarProps) {
+export default function SysMLToolbar({ onModeChange, currentMode, onUndo, onRedo, canUndo, canRedo }: SysMLToolbarProps) {
   const { selectedDiagram } = useDiagram();
   const { data: types } = useViewpointTypes(selectedDiagram?.viewpointId);
 
@@ -39,6 +43,32 @@ export default function SysMLToolbar({ onModeChange, currentMode }: SysMLToolbar
 
   return (
     <div style={styles.container}>
+      {/* Undo/Redo Section */}
+      <div style={styles.section}>
+        <button
+          style={{
+            ...styles.button,
+            ...((!canUndo) ? styles.buttonDisabled : {}),
+          }}
+          onClick={onUndo}
+          disabled={!canUndo}
+          title="Undo (Ctrl+Z / Cmd+Z)"
+        >
+          {React.createElement(uiActionIcons.undo, { size: 16, style: styles.icon })}
+        </button>
+        <button
+          style={{
+            ...styles.button,
+            ...((!canRedo) ? styles.buttonDisabled : {}),
+          }}
+          onClick={onRedo}
+          disabled={!canRedo}
+          title="Redo (Ctrl+Y / Cmd+Shift+Z)"
+        >
+          {React.createElement(uiActionIcons.redo, { size: 16, style: styles.icon })}
+        </button>
+      </div>
+
       <div style={styles.section}>
         <div style={styles.sectionTitle}>Elements</div>
         <div style={styles.buttonGroup}>
@@ -152,5 +182,9 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: '#007bff',
     color: 'white',
     borderColor: '#0056b3',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+    cursor: 'not-allowed',
   },
 };

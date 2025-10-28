@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import DiagramSelector from './DiagramSelector';
 import DiagramManager from './DiagramManager';
 import ModelBrowser from './ModelBrowser';
@@ -10,12 +10,31 @@ export default function SysMLModelingView() {
   const [toolbarMode, setToolbarMode] = useState<ToolbarMode>('select');
   const [toolbarData, setToolbarData] = useState<{ kind?: string; type?: string }>();
   const [showDiagramManager, setShowDiagramManager] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
   const { selectedDiagram } = useDiagram();
+
+  // Refs to store undo/redo functions from canvas
+  const undoRef = useRef<(() => void) | null>(null);
+  const redoRef = useRef<(() => void) | null>(null);
 
   const handleModeChange = (mode: ToolbarMode, data?: { kind?: string; type?: string }) => {
     setToolbarMode(mode);
     setToolbarData(data);
   };
+
+  const handleUndoRedoChange = useCallback((newCanUndo: boolean, newCanRedo: boolean) => {
+    setCanUndo(newCanUndo);
+    setCanRedo(newCanRedo);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    undoRef.current?.();
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    redoRef.current?.();
+  }, []);
 
   return (
     <div style={styles.container}>
@@ -36,7 +55,14 @@ export default function SysMLModelingView() {
       </div>
 
       {/* Toolbar */}
-      <SysMLToolbar onModeChange={handleModeChange} currentMode={toolbarMode} />
+      <SysMLToolbar
+        onModeChange={handleModeChange}
+        currentMode={toolbarMode}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
+      />
 
       {/* Main Content */}
       <div style={styles.content}>
@@ -47,7 +73,15 @@ export default function SysMLModelingView() {
 
         {/* Canvas (Right Panel) */}
         <div style={styles.canvas}>
-          <SysMLCanvas toolbarMode={toolbarMode} toolbarData={toolbarData} />
+          <SysMLCanvas
+            toolbarMode={toolbarMode}
+            toolbarData={toolbarData}
+            onUndoRedoChange={handleUndoRedoChange}
+            undoRedoRef={(undo, redo) => {
+              undoRef.current = undo;
+              redoRef.current = redo;
+            }}
+          />
         </div>
       </div>
 
