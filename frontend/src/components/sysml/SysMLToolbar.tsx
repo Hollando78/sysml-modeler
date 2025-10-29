@@ -8,13 +8,14 @@ export type ToolbarMode = 'select' | 'create-node' | 'create-relationship';
 interface SysMLToolbarProps {
   onModeChange: (mode: ToolbarMode, data?: { kind?: string; type?: string }) => void;
   currentMode: ToolbarMode;
+  currentData?: { kind?: string; type?: string };
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
   canRedo?: boolean;
 }
 
-export default function SysMLToolbar({ onModeChange, currentMode, onUndo, onRedo, canUndo, canRedo }: SysMLToolbarProps) {
+export default function SysMLToolbar({ onModeChange, currentMode, currentData, onUndo, onRedo, canUndo, canRedo }: SysMLToolbarProps) {
   const { selectedDiagram } = useDiagram();
   const { data: types } = useViewpointTypes(selectedDiagram?.viewpointId);
 
@@ -85,12 +86,13 @@ export default function SysMLToolbar({ onModeChange, currentMode, onUndo, onRedo
           </button>
           {types.nodeKinds.map((kind) => {
             const Icon = getNodeIcon(kind);
+            const isActive = currentMode === 'create-node' && currentData?.kind === kind;
             return (
               <button
                 key={kind}
                 style={{
                   ...styles.button,
-                  ...(currentMode === 'create-node' ? styles.buttonActive : {}),
+                  ...(isActive ? styles.buttonActive : {}),
                 }}
                 onClick={() => onModeChange('create-node', { kind })}
                 title={`Create ${formatKind(kind)}`}
@@ -109,12 +111,13 @@ export default function SysMLToolbar({ onModeChange, currentMode, onUndo, onRedo
           <div style={styles.buttonGroup}>
             {types.edgeKinds.map((type) => {
               const Icon = getEdgeIcon(type);
+              const isActive = currentMode === 'create-relationship' && currentData?.type === type;
               return (
                 <button
                   key={type}
                   style={{
                     ...styles.button,
-                    ...(currentMode === 'create-relationship' ? styles.buttonActive : {}),
+                    ...(isActive ? styles.buttonActive : {}),
                   }}
                   onClick={() => onModeChange('create-relationship', { type })}
                   title={`Create ${formatKind(type)} relationship`}

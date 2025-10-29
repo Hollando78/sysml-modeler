@@ -58,6 +58,7 @@ export default function SysMLModelingView() {
       <SysMLToolbar
         onModeChange={handleModeChange}
         currentMode={toolbarMode}
+        currentData={toolbarData}
         onUndo={handleUndo}
         onRedo={handleRedo}
         canUndo={canUndo}
