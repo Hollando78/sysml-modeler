@@ -221,7 +221,8 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
     dataMappers: [addBaseDefinition, addRedefines, addSubsets],
     compartmentBuilders: [
       (spec) => propertiesToItems('attributes', spec.attributes),
-      (spec) => portsToCompartment(spec.ports)
+      (spec) => portsToCompartment(spec.ports),
+      (spec) => partsToCompartment(spec.parts)
     ]
   },
 
