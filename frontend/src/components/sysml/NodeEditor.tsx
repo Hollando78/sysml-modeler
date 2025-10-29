@@ -60,8 +60,8 @@ export default function NodeEditor({ nodeData, onClose, onSave }: NodeEditorProp
             <h2 style={styles.title}>Edit {formatKind(nodeData.kind)}</h2>
             <div style={styles.subtitle}>ID: {nodeData.id}</div>
           </div>
-          <button style={styles.closeButton} onClick={onClose}>
-            <X size={24} />
+          <button type="button" style={styles.closeButton} onClick={onClose}>
+            {React.createElement(X, { size: 24 })}
           </button>
         </div>
 
@@ -118,15 +118,15 @@ export default function NodeEditor({ nodeData, onClose, onSave }: NodeEditorProp
                 {nodeData.compartments.map((compartment, index) => (
                   <div key={index} style={styles.compartmentItem}>
                     <button
+                      type="button"
                       style={styles.toggleButton}
                       onClick={() => toggleCompartmentVisibility(index)}
                       title={compartmentVisibility[index] ? 'Hide compartment' : 'Show compartment'}
                     >
-                      {compartmentVisibility[index] ? (
-                        <Eye size={16} />
-                      ) : (
-                        <EyeOff size={16} />
-                      )}
+                      {compartmentVisibility[index]
+                        ? React.createElement(Eye, { size: 16 })
+                        : React.createElement(EyeOff, { size: 16 })
+                      }
                     </button>
                     <div style={styles.compartmentInfo}>
                       <div style={styles.compartmentTitle}>
@@ -169,11 +169,12 @@ export default function NodeEditor({ nodeData, onClose, onSave }: NodeEditorProp
             Cancel
           </button>
           <button
+            type="button"
             style={styles.saveButton}
             onClick={handleSave}
             disabled={!name.trim()}
           >
-            <Save size={16} style={styles.buttonIcon} />
+            {React.createElement(Save, { size: 16, style: styles.buttonIcon })}
             <span>Save Changes</span>
           </button>
         </div>
