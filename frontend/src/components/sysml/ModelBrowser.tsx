@@ -153,7 +153,16 @@ export default function ModelBrowser() {
               ...styles.viewButton,
               ...(viewMode === 'tree' ? styles.viewButtonActive : {})
             }}
-            onClick={() => setViewMode('tree')}
+            onClick={() => {
+              setViewMode('tree');
+              // Auto-expand all kinds when switching to tree view
+              if (model) {
+                const allKinds = Object.keys(treeStructure);
+                if (allKinds.length > 0) {
+                  setExpandedKinds(new Set(allKinds));
+                }
+              }
+            }}
             title="Tree View"
           >
             {React.createElement(Network, { size: 14 })}
