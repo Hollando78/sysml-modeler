@@ -210,6 +210,25 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
         console.log('[DEBUG] Composition on canvas created successfully:', result);
 
+        // 5. Add the part-usage to the diagram so it's visible
+        await diagramMutations.addElementsToDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementIds: [result.partUsageId],
+        });
+
+        // 6. Position the part-usage between the source and target
+        // Calculate midpoint between source and drop location
+        const sourceNode = nodes.find(n => n.id === sourceId);
+        if (sourceNode) {
+          const midX = (sourceNode.position.x + x) / 2;
+          const midY = (sourceNode.position.y + y) / 2;
+          await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementId: result.partUsageId,
+            position: { x: midX, y: midY },
+          });
+        }
+
         // Add undo/redo action
         addAction({
           type: 'create-composition',
@@ -235,12 +254,28 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
               elementId: targetId,
               position: { x, y },
             });
-            await elementMutations.createComposition.mutateAsync({
+            const redoResult = await elementMutations.createComposition.mutateAsync({
               sourceId,
               targetId,
               partName: name,
               compositionType,
             });
+            // Add part-usage to diagram
+            await diagramMutations.addElementsToDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementIds: [redoResult.partUsageId],
+            });
+            // Position the part-usage
+            const sourceNode = nodes.find(n => n.id === sourceId);
+            if (sourceNode) {
+              const midX = (sourceNode.position.x + x) / 2;
+              const midY = (sourceNode.position.y + y) / 2;
+              await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+                diagramId: activeDiagram.id,
+                elementId: redoResult.partUsageId,
+                position: { x: midX, y: midY },
+              });
+            }
           },
         });
       } catch (error) {
