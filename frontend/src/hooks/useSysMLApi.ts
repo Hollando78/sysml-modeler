@@ -58,6 +58,21 @@ export function useSysMLMutations(_viewpointId?: string) {
     onSuccess: invalidateModel,
   });
 
+  const createCompositionMutation = useMutation({
+    mutationFn: ({
+      sourceId,
+      targetId,
+      partName,
+      compositionType,
+    }: {
+      sourceId: string;
+      targetId: string;
+      partName: string;
+      compositionType: 'composition' | 'aggregation';
+    }) => apiClient.createComposition(sourceId, targetId, partName, compositionType),
+    onSuccess: invalidateModel,
+  });
+
   const updatePositionMutation = useMutation({
     mutationFn: ({
       id,
@@ -77,6 +92,7 @@ export function useSysMLMutations(_viewpointId?: string) {
     deleteElement: deleteElementMutation,
     createRelationship: createRelationshipMutation,
     deleteRelationship: deleteRelationshipMutation,
+    createComposition: createCompositionMutation,
     updatePosition: updatePositionMutation,
   };
 }

@@ -72,6 +72,18 @@ export const apiClient = {
     });
   },
 
+  async createComposition(
+    sourceId: string,
+    targetId: string,
+    partName: string,
+    compositionType: 'composition' | 'aggregation'
+  ): Promise<{ partUsageId: string; definitionRelId: string; compositionRelId: string }> {
+    return fetchJSON(`${API_BASE}/compositions`, {
+      method: 'POST',
+      body: JSON.stringify({ sourceId, targetId, partName, compositionType }),
+    });
+  },
+
   // Position operations
   async updateElementPosition(
     id: string,

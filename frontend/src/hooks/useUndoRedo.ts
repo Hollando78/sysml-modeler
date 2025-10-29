@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 
 export interface UndoRedoAction {
-  type: 'create-node' | 'delete-node' | 'move-node' | 'create-edge' | 'delete-edge' | 'add-to-diagram' | 'remove-from-diagram';
+  type: 'create-node' | 'delete-node' | 'move-node' | 'create-edge' | 'delete-edge' | 'add-to-diagram' | 'remove-from-diagram' | 'create-composition';
   data: any;
   undo: () => void | Promise<void>;
   redo: () => void | Promise<void>;

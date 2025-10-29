@@ -35,7 +35,15 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
   const [edges, setEdges] = useState<Edge[]>([]);
   const [editingNode, setEditingNode] = useState<Node<SysMLNodeData> | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
-  const [promptData, setPromptData] = useState<{ kind: string; clickPosition: { x: number; y: number } } | null>(null);
+  const [promptData, setPromptData] = useState<{
+    kind: string;
+    clickPosition: { x: number; y: number };
+    compositionData?: {
+      sourceId: string;
+      targetId: string;
+      compositionType: 'composition' | 'aggregation';
+    };
+  } | null>(null);
 
   // Notify parent of undo/redo state changes
   useEffect(() => {
@@ -149,75 +157,122 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
     if (!promptData || !activeDiagram) return;
 
-    const id = `${promptData.kind}-${Date.now()}`;
-    const { x: defaultX, y: defaultY } = promptData.clickPosition;
+    // Check if this is a composition/aggregation relationship
+    if (promptData.kind === 'composition' && promptData.compositionData) {
+      const { sourceId, targetId, compositionType } = promptData.compositionData;
 
-    console.log('[DEBUG] Creating element and adding to diagram:', {
-      kind: promptData.kind,
-      id,
-      name,
-      position: { x: defaultX, y: defaultY },
-      diagramId: activeDiagram.id,
-    });
-
-    // Run mutations sequentially to ensure proper order
-    try {
-      // 1. Create the element first
-      await elementMutations.createElement.mutateAsync({
-        kind: promptData.kind as any,
-        spec: {
-          id,
-          name,
-        },
+      console.log('[DEBUG] Creating SysML v2.0 compliant composition:', {
+        sourceId,
+        targetId,
+        partName: name,
+        compositionType,
       });
 
-      // 2. Add element to diagram
-      await diagramMutations.addElementsToDiagram.mutateAsync({
-        diagramId: activeDiagram.id,
-        elementIds: [id],
-      });
+      try {
+        // Create composition (which creates part-usage, definition rel, and composition rel)
+        const result = await elementMutations.createComposition.mutateAsync({
+          sourceId,
+          targetId,
+          partName: name,
+          compositionType,
+        });
 
-      // 3. Set initial position in diagram
-      await diagramMutations.updateElementPositionInDiagram.mutateAsync({
-        diagramId: activeDiagram.id,
-        elementId: id,
+        console.log('[DEBUG] Composition created successfully:', result);
+
+        // Add undo/redo action
+        addAction({
+          type: 'create-composition',
+          data: { sourceId, targetId, partName: name, compositionType, ...result },
+          description: `Create ${compositionType} relationship with part "${name}"`,
+          undo: async () => {
+            // Delete the part-usage (which will cascade delete the relationships)
+            await elementMutations.deleteElement.mutateAsync(result.partUsageId);
+          },
+          redo: async () => {
+            // Recreate the composition
+            await elementMutations.createComposition.mutateAsync({
+              sourceId,
+              targetId,
+              partName: name,
+              compositionType,
+            });
+          },
+        });
+      } catch (error) {
+        console.error('[DEBUG] Error creating composition:', error);
+      }
+    } else {
+      // Regular node creation
+      const id = `${promptData.kind}-${Date.now()}`;
+      const { x: defaultX, y: defaultY } = promptData.clickPosition;
+
+      console.log('[DEBUG] Creating element and adding to diagram:', {
+        kind: promptData.kind,
+        id,
+        name,
         position: { x: defaultX, y: defaultY },
+        diagramId: activeDiagram.id,
       });
 
-      console.log('[DEBUG] Element created and added to diagram successfully');
+      // Run mutations sequentially to ensure proper order
+      try {
+        // 1. Create the element first
+        await elementMutations.createElement.mutateAsync({
+          kind: promptData.kind as any,
+          spec: {
+            id,
+            name,
+          },
+        });
 
-      // 4. Add undo/redo action
-      addAction({
-        type: 'create-node',
-        data: { id, kind: promptData.kind, name, position: { x: defaultX, y: defaultY }, diagramId: activeDiagram.id },
-        description: `Create ${promptData.kind} "${name}"`,
-        undo: async () => {
-          // Remove from diagram and delete element
-          await diagramMutations.removeElementFromDiagram.mutateAsync({
-            diagramId: activeDiagram.id,
-            elementId: id,
-          });
-          await elementMutations.deleteElement.mutateAsync(id);
-        },
-        redo: async () => {
-          // Recreate element and add to diagram
-          await elementMutations.createElement.mutateAsync({
-            kind: promptData.kind as any,
-            spec: { id, name },
-          });
-          await diagramMutations.addElementsToDiagram.mutateAsync({
-            diagramId: activeDiagram.id,
-            elementIds: [id],
-          });
-          await diagramMutations.updateElementPositionInDiagram.mutateAsync({
-            diagramId: activeDiagram.id,
-            elementId: id,
-            position: { x: defaultX, y: defaultY },
-          });
-        },
-      });
-    } catch (error) {
-      console.error('[DEBUG] Error creating element:', error);
+        // 2. Add element to diagram
+        await diagramMutations.addElementsToDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementIds: [id],
+        });
+
+        // 3. Set initial position in diagram
+        await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementId: id,
+          position: { x: defaultX, y: defaultY },
+        });
+
+        console.log('[DEBUG] Element created and added to diagram successfully');
+
+        // 4. Add undo/redo action
+        addAction({
+          type: 'create-node',
+          data: { id, kind: promptData.kind, name, position: { x: defaultX, y: defaultY }, diagramId: activeDiagram.id },
+          description: `Create ${promptData.kind} "${name}"`,
+          undo: async () => {
+            // Remove from diagram and delete element
+            await diagramMutations.removeElementFromDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementId: id,
+            });
+            await elementMutations.deleteElement.mutateAsync(id);
+          },
+          redo: async () => {
+            // Recreate element and add to diagram
+            await elementMutations.createElement.mutateAsync({
+              kind: promptData.kind as any,
+              spec: { id, name },
+            });
+            await diagramMutations.addElementsToDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementIds: [id],
+            });
+            await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementId: id,
+              position: { x: defaultX, y: defaultY },
+            });
+          },
+        });
+      } catch (error) {
+        console.error('[DEBUG] Error creating element:', error);
+      }
     }
   }, [promptData, activeDiagram, elementMutations, diagramMutations, addAction]);
 
@@ -421,43 +476,59 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       console.log('[DEBUG] onConnect triggered', { connection, toolbarMode });
 
       if (toolbarMode === 'create-relationship' && toolbarData?.type && connection.source && connection.target) {
-        const id = `${connection.source}-${toolbarData.type}-${connection.target}`;
+        // Check if this is a composition or aggregation (SysML v2.0 compliant)
+        if (toolbarData.type === 'composition' || toolbarData.type === 'aggregation') {
+          // Show prompt modal for part name
+          setPromptData({
+            kind: 'composition',
+            clickPosition: { x: 0, y: 0 }, // Not used for composition
+            compositionData: {
+              sourceId: connection.source,
+              targetId: connection.target,
+              compositionType: toolbarData.type as 'composition' | 'aggregation',
+            },
+          });
+          setShowPrompt(true);
+        } else {
+          // Regular relationship (not composition/aggregation)
+          const id = `${connection.source}-${toolbarData.type}-${connection.target}`;
 
-        console.log('[DEBUG] Creating relationship', {
-          id,
-          type: toolbarData.type,
-          source: connection.source,
-          target: connection.target
-        });
+          console.log('[DEBUG] Creating relationship', {
+            id,
+            type: toolbarData.type,
+            source: connection.source,
+            target: connection.target
+          });
 
-        const relationshipSpec = {
-          id,
-          type: toolbarData.type,
-          source: connection.source,
-          target: connection.target,
-          label: toolbarData.type,
-        };
+          const relationshipSpec = {
+            id,
+            type: toolbarData.type,
+            source: connection.source,
+            target: connection.target,
+            label: toolbarData.type,
+          };
 
-        (async () => {
-          try {
-            await elementMutations.createRelationship.mutateAsync(relationshipSpec);
+          (async () => {
+            try {
+              await elementMutations.createRelationship.mutateAsync(relationshipSpec);
 
-            // Add undo/redo action
-            addAction({
-              type: 'create-edge',
-              data: relationshipSpec,
-              description: `Create ${toolbarData.type} relationship`,
-              undo: async () => {
-                await elementMutations.deleteRelationship.mutateAsync(id);
-              },
-              redo: async () => {
-                await elementMutations.createRelationship.mutateAsync(relationshipSpec);
-              },
-            });
-          } catch (error) {
-            console.error('[DEBUG] Error creating relationship:', error);
-          }
-        })();
+              // Add undo/redo action
+              addAction({
+                type: 'create-edge',
+                data: relationshipSpec,
+                description: `Create ${toolbarData.type} relationship`,
+                undo: async () => {
+                  await elementMutations.deleteRelationship.mutateAsync(id);
+                },
+                redo: async () => {
+                  await elementMutations.createRelationship.mutateAsync(relationshipSpec);
+                },
+              });
+            } catch (error) {
+              console.error('[DEBUG] Error creating relationship:', error);
+            }
+          })();
+        }
       }
     },
     [toolbarMode, toolbarData, elementMutations, addAction]
@@ -658,13 +729,17 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         />
       )}
 
-      {/* Prompt Modal for creating nodes */}
+      {/* Prompt Modal for creating nodes and compositions */}
       {showPrompt && promptData && (
         <PromptModal
-          title="Create Element"
-          message={`Enter name for ${promptData.kind.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}:`}
+          title={promptData.kind === 'composition' ? 'Create Part' : 'Create Element'}
+          message={
+            promptData.kind === 'composition'
+              ? `Enter name for the part usage (${promptData.compositionData?.compositionType}):`
+              : `Enter name for ${promptData.kind.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}:`
+          }
           defaultValue=""
-          placeholder="Element name"
+          placeholder={promptData.kind === 'composition' ? 'Part name' : 'Element name'}
           onConfirm={handlePromptConfirm}
           onCancel={handlePromptCancel}
         />

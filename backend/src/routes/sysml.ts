@@ -339,6 +339,39 @@ router.post('/relationships', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/sysml/compositions
+ * Create a SysML v2.0 compliant composition/aggregation relationship
+ * This creates an intermediate part-usage element
+ */
+router.post('/compositions', async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      sourceId: z.string(),
+      targetId: z.string(),
+      partName: z.string(),
+      compositionType: z.enum(['composition', 'aggregation']),
+    });
+
+    const { sourceId, targetId, partName, compositionType } = schema.parse(req.body);
+    const result = await modelService.createComposition(sourceId, targetId, partName, compositionType);
+
+    return res.status(201).json({
+      success: true,
+      partUsageId: result.partUsageId,
+      definitionRelId: result.definitionRelId,
+      compositionRelId: result.compositionRelId,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: error.errors });
+    } else {
+      console.error('Error creating composition:', error);
+      return res.status(500).json({ error: 'Failed to create composition' });
+    }
+  }
+});
+
+/**
  * DELETE /api/sysml/relationships/:id
  * Delete a relationship
  */

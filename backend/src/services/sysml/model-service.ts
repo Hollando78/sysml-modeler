@@ -234,6 +234,101 @@ export async function deleteRelationship(id: string): Promise<void> {
 }
 
 /**
+ * Create a SysML v2.0 compliant composition relationship
+ * This creates an intermediate part-usage that references the target definition
+ */
+export async function createComposition(
+  sourceId: string,
+  targetId: string,
+  partName: string,
+  compositionType: 'composition' | 'aggregation'
+): Promise<{ partUsageId: string; definitionRelId: string; compositionRelId: string }> {
+  const session = getSession();
+  try {
+    // Generate IDs
+    const partUsageId = `${sourceId}-part-${Date.now()}`;
+    const definitionRelId = `${partUsageId}-definition-${targetId}`;
+    const compositionRelId = `${sourceId}-${compositionType}-${partUsageId}`;
+
+    const relType = compositionType === 'composition' ? 'COMPOSITION' : 'AGGREGATION';
+
+    const now = new Date().toISOString();
+
+    // Create part-usage, definition relationship, and composition relationship in one transaction
+    const query = `
+      // Verify source and target exist
+      MATCH (source:SysMLElement {id: $sourceId})
+      MATCH (target:SysMLElement {id: $targetId})
+
+      // Create the part-usage node
+      CREATE (partUsage:SysMLElement:PartUsage {
+        id: $partUsageId,
+        name: $partName,
+        createdAt: $now,
+        updatedAt: $now
+      })
+
+      // Create DEFINITION relationship: part-usage -> target definition
+      CREATE (partUsage)-[defRel:DEFINITION {
+        id: $definitionRelId,
+        createdAt: $now,
+        updatedAt: $now
+      }]->(target)
+
+      // Create COMPOSITION/AGGREGATION relationship: source -> part-usage
+      CREATE (source)-[compRel:${relType} {
+        id: $compositionRelId,
+        createdAt: $now,
+        updatedAt: $now
+      }]->(partUsage)
+
+      RETURN partUsage, defRel, compRel
+    `;
+
+    const result = await session.run(query, {
+      sourceId,
+      targetId,
+      partUsageId,
+      partName,
+      definitionRelId,
+      compositionRelId,
+      now,
+    });
+
+    if (result.records.length === 0) {
+      throw new Error('Failed to create composition. Source or target not found.');
+    }
+
+    return {
+      partUsageId,
+      definitionRelId,
+      compositionRelId,
+    };
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Delete a composition relationship and its intermediate part-usage
+ * This reverses the createComposition operation
+ */
+export async function deleteComposition(partUsageId: string): Promise<void> {
+  const session = getSession();
+  try {
+    // Delete the part-usage node and all its relationships
+    const query = `
+      MATCH (partUsage:SysMLElement:PartUsage {id: $partUsageId})
+      DETACH DELETE partUsage
+    `;
+
+    await session.run(query, { partUsageId });
+  } finally {
+    await session.close();
+  }
+}
+
+/**
  * Update element position for a specific viewpoint
  */
 export async function updateElementPosition(
