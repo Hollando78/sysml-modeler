@@ -162,6 +162,14 @@ export interface SysMLPartDefinitionSpec {
   description?: string;
   attributes?: SysMLPropertySpec[];
   ports?: SysMLPortSpec[];
+  parts?: Array<{
+    id: string;
+    name: string;
+    definitionId: string;
+    definitionName: string;
+    multiplicity?: string;
+    relationshipType?: string;
+  }>;
   actions?: string[];
   states?: string[];
 }

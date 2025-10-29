@@ -93,6 +93,25 @@ const stringsToCompartment = (title: string, values?: string[]): SysMLCompartmen
   );
 };
 
+const partsToCompartment = (parts?: Array<{
+  id: string;
+  name: string;
+  definitionName: string;
+  multiplicity?: string;
+}>): SysMLCompartment | undefined => {
+  if (!parts || parts.length === 0) {
+    return undefined;
+  }
+
+  return buildCompartment(
+    'parts',
+    parts.map((part) => ({
+      label: part.name,
+      value: `: ${part.definitionName}${part.multiplicity ? ` [${part.multiplicity}]` : ''}`
+    }))
+  );
+};
+
 // ============================================================================
 // Generic Node Factory
 // ============================================================================
@@ -190,6 +209,7 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
     compartmentBuilders: [
       (spec) => propertiesToItems('attributes', spec.attributes),
       (spec) => portsToCompartment(spec.ports),
+      (spec) => partsToCompartment(spec.parts),
       (spec) => stringsToCompartment('actions', spec.actions),
       (spec) => stringsToCompartment('states', spec.states)
     ]

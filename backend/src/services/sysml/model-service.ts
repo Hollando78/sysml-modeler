@@ -52,10 +52,23 @@ export async function fetchModel(viewpointId?: string): Promise<SysMLModel> {
     }
 
     const query = `
-      // Fetch nodes
+      // Fetch nodes with their owned parts
       MATCH (n:SysMLElement)
       ${nodeLabelFilter}
-      WITH collect({labels: labels(n), properties: properties(n)}) as nodes
+      OPTIONAL MATCH (n)-[compRel:COMPOSITION|AGGREGATION]->(partUsage:PartUsage)-[defRel:DEFINITION]->(partDef:SysMLElement)
+      WITH n, collect({
+        id: partUsage.id,
+        name: partUsage.name,
+        definitionId: partDef.id,
+        definitionName: partDef.name,
+        multiplicity: partUsage.multiplicity,
+        relationshipType: type(compRel)
+      }) as ownedParts
+      WITH collect({
+        labels: labels(n),
+        properties: properties(n),
+        ownedParts: CASE WHEN size(ownedParts) > 0 AND ownedParts[0].id IS NOT NULL THEN ownedParts ELSE [] END
+      }) as nodes
 
       // Fetch relationships
       OPTIONAL MATCH (source:SysMLElement)-[r]->(target:SysMLElement)
@@ -84,6 +97,18 @@ export async function fetchModel(viewpointId?: string): Promise<SysMLModel> {
       const specificLabel = node.labels.find((l: string) => l !== 'SysMLElement');
       const kind = labelToNodeKind(specificLabel);
       const spec = neo4jPropertiesToSpec(node.properties);
+
+      // Add owned parts if present
+      if (node.ownedParts && node.ownedParts.length > 0) {
+        spec.parts = node.ownedParts.map((part: any) => ({
+          id: part.id,
+          name: part.name,
+          definitionId: part.definitionId,
+          definitionName: part.definitionName,
+          multiplicity: part.multiplicity,
+          relationshipType: part.relationshipType,
+        }));
+      }
 
       return { kind, spec };
     });
