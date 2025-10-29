@@ -18,6 +18,7 @@ export const structuralDefinitionViewpoint: SysMLViewpoint = {
     'Focuses on part/action/port/item definitions and the specialization chains that tie them together.',
   includeNodeKinds: [
     'part-definition',
+    'part-usage', // Include part-usage to support SysML v2.0 composition relationships
     'action-definition',
     'port-definition',
     'item-definition',
