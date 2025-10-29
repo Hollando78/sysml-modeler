@@ -8,6 +8,7 @@ import { useUndoRedo } from '../../hooks/useUndoRedo';
 import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect } from 'reactflow';
 import type { ToolbarMode } from './SysMLToolbar';
 import NodeEditor from './NodeEditor';
+import PromptModal from '../common/PromptModal';
 
 interface SysMLCanvasProps {
   toolbarMode: ToolbarMode;
@@ -33,6 +34,8 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [editingNode, setEditingNode] = useState<Node<SysMLNodeData> | null>(null);
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [promptData, setPromptData] = useState<{ kind: string; clickPosition: { x: number; y: number } } | null>(null);
 
   // Notify parent of undo/redo state changes
   useEffect(() => {
@@ -127,89 +130,101 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         return;
       }
 
-      const id = `${toolbarData.kind}-${Date.now()}`;
-      const name = prompt(`Enter name for ${toolbarData.kind}:`);
+      // Use a default position
+      const defaultX = 100 + Math.random() * 200;
+      const defaultY = 100 + Math.random() * 200;
 
-      console.log('[DEBUG] Node creation prompt result:', { name, id });
+      // Show prompt modal
+      setPromptData({
+        kind: toolbarData.kind,
+        clickPosition: { x: defaultX, y: defaultY },
+      });
+      setShowPrompt(true);
+    },
+    [toolbarMode, toolbarData]
+  );
 
-      if (name && activeDiagram) {
-        // Use a default position
-        const defaultX = 100 + Math.random() * 200;
-        const defaultY = 100 + Math.random() * 200;
+  const handlePromptConfirm = useCallback(async (name: string) => {
+    setShowPrompt(false);
 
-        console.log('[DEBUG] Creating element and adding to diagram:', {
-          kind: toolbarData.kind,
+    if (!promptData || !activeDiagram) return;
+
+    const id = `${promptData.kind}-${Date.now()}`;
+    const { x: defaultX, y: defaultY } = promptData.clickPosition;
+
+    console.log('[DEBUG] Creating element and adding to diagram:', {
+      kind: promptData.kind,
+      id,
+      name,
+      position: { x: defaultX, y: defaultY },
+      diagramId: activeDiagram.id,
+    });
+
+    // Run mutations sequentially to ensure proper order
+    try {
+      // 1. Create the element first
+      await elementMutations.createElement.mutateAsync({
+        kind: promptData.kind as any,
+        spec: {
           id,
           name,
-          position: { x: defaultX, y: defaultY },
-          diagramId: activeDiagram.id,
-        });
+        },
+      });
 
-        // Run mutations sequentially to ensure proper order
-        (async () => {
-          try {
-            // 1. Create the element first
-            await elementMutations.createElement.mutateAsync({
-              kind: toolbarData.kind!,
-              spec: {
-                id,
-                name,
-              },
-            });
+      // 2. Add element to diagram
+      await diagramMutations.addElementsToDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        elementIds: [id],
+      });
 
-            // 2. Add element to diagram
-            await diagramMutations.addElementsToDiagram.mutateAsync({
-              diagramId: activeDiagram.id,
-              elementIds: [id],
-            });
+      // 3. Set initial position in diagram
+      await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        elementId: id,
+        position: { x: defaultX, y: defaultY },
+      });
 
-            // 3. Set initial position in diagram
-            await diagramMutations.updateElementPositionInDiagram.mutateAsync({
-              diagramId: activeDiagram.id,
-              elementId: id,
-              position: { x: defaultX, y: defaultY },
-            });
+      console.log('[DEBUG] Element created and added to diagram successfully');
 
-            console.log('[DEBUG] Element created and added to diagram successfully');
+      // 4. Add undo/redo action
+      addAction({
+        type: 'create-node',
+        data: { id, kind: promptData.kind, name, position: { x: defaultX, y: defaultY }, diagramId: activeDiagram.id },
+        description: `Create ${promptData.kind} "${name}"`,
+        undo: async () => {
+          // Remove from diagram and delete element
+          await diagramMutations.removeElementFromDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementId: id,
+          });
+          await elementMutations.deleteElement.mutateAsync(id);
+        },
+        redo: async () => {
+          // Recreate element and add to diagram
+          await elementMutations.createElement.mutateAsync({
+            kind: promptData.kind as any,
+            spec: { id, name },
+          });
+          await diagramMutations.addElementsToDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementIds: [id],
+          });
+          await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementId: id,
+            position: { x: defaultX, y: defaultY },
+          });
+        },
+      });
+    } catch (error) {
+      console.error('[DEBUG] Error creating element:', error);
+    }
+  }, [promptData, activeDiagram, elementMutations, diagramMutations, addAction]);
 
-            // 4. Add undo/redo action
-            addAction({
-              type: 'create-node',
-              data: { id, kind: toolbarData.kind, name, position: { x: defaultX, y: defaultY }, diagramId: activeDiagram.id },
-              description: `Create ${toolbarData.kind} "${name}"`,
-              undo: async () => {
-                // Remove from diagram and delete element
-                await diagramMutations.removeElementFromDiagram.mutateAsync({
-                  diagramId: activeDiagram.id,
-                  elementId: id,
-                });
-                await elementMutations.deleteElement.mutateAsync(id);
-              },
-              redo: async () => {
-                // Recreate element and add to diagram
-                await elementMutations.createElement.mutateAsync({
-                  kind: toolbarData.kind!,
-                  spec: { id, name },
-                });
-                await diagramMutations.addElementsToDiagram.mutateAsync({
-                  diagramId: activeDiagram.id,
-                  elementIds: [id],
-                });
-                await diagramMutations.updateElementPositionInDiagram.mutateAsync({
-                  diagramId: activeDiagram.id,
-                  elementId: id,
-                  position: { x: defaultX, y: defaultY },
-                });
-              },
-            });
-          } catch (error) {
-            console.error('[DEBUG] Error creating element:', error);
-          }
-        })();
-      }
-    },
-    [toolbarMode, toolbarData, activeDiagram, elementMutations, diagramMutations, addAction]
-  );
+  const handlePromptCancel = useCallback(() => {
+    setShowPrompt(false);
+    setPromptData(null);
+  }, []);
 
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     console.log('[DEBUG] onNodesChange triggered', {
@@ -640,6 +655,18 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
           nodeData={editingNode.data}
           onClose={() => setEditingNode(null)}
           onSave={handleNodeEditSave}
+        />
+      )}
+
+      {/* Prompt Modal for creating nodes */}
+      {showPrompt && promptData && (
+        <PromptModal
+          title="Create Element"
+          message={`Enter name for ${promptData.kind.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}:`}
+          defaultValue=""
+          placeholder="Element name"
+          onConfirm={handlePromptConfirm}
+          onCancel={handlePromptCancel}
         />
       )}
     </div>
