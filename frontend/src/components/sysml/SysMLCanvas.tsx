@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { applyNodeChanges, applyEdgeChanges, ConnectionLineType } from 'reactflow';
 import { SysMLDiagram, createNodesFromSpecs, createEdgesFromRelationships } from '../../lib/sysml-diagram';
-import type { SysMLNodeSpec as LibSysMLNodeSpec, SysMLRelationshipSpec as LibSysMLRelationshipSpec } from '../../lib/sysml-diagram/types';
+import type { SysMLNodeSpec as LibSysMLNodeSpec, SysMLRelationshipSpec as LibSysMLRelationshipSpec, SysMLNodeData } from '../../lib/sysml-diagram/types';
 import { useSysMLModel, useSysMLMutations, useDiagramMutations, useSysMLDiagram } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect } from 'reactflow';
 import type { ToolbarMode } from './SysMLToolbar';
+import NodeEditor from './NodeEditor';
 
 interface SysMLCanvasProps {
   toolbarMode: ToolbarMode;
@@ -31,6 +32,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const [editingNode, setEditingNode] = useState<Node<SysMLNodeData> | null>(null);
 
   // Notify parent of undo/redo state changes
   useEffect(() => {
@@ -446,15 +448,56 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     [toolbarMode, toolbarData, elementMutations, addAction]
   );
 
-  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
-    console.log('[DEBUG] Node clicked!', {
+  const onNodeDoubleClick = useCallback((_event: React.MouseEvent, node: Node) => {
+    console.log('[DEBUG] Node double-clicked!', {
       nodeId: node.id,
-      nodeType: node.type,
-      draggable: node.draggable,
-      selectable: node.selectable,
-      selected: node.selected
+      nodeData: node.data
     });
+    setEditingNode(node as Node<SysMLNodeData>);
   }, []);
+
+  const handleNodeEditSave = useCallback(async (updates: Partial<SysMLNodeData>) => {
+    if (!editingNode) return;
+
+    const oldData = { ...editingNode.data };
+    const newData = { ...oldData, ...updates };
+
+    console.log('[DEBUG] Saving node updates', {
+      id: editingNode.id,
+      updates,
+      oldData,
+      newData
+    });
+
+    try {
+      // Update the element in the backend
+      await elementMutations.updateElement.mutateAsync({
+        id: editingNode.id,
+        updates: updates,
+      });
+
+      // Add undo/redo action
+      addAction({
+        type: 'create-node', // Reusing type - could add 'update-node' type
+        data: { id: editingNode.id, oldData, newData },
+        description: `Edit ${editingNode.data.kind} "${editingNode.data.name}"`,
+        undo: async () => {
+          await elementMutations.updateElement.mutateAsync({
+            id: editingNode.id,
+            updates: oldData,
+          });
+        },
+        redo: async () => {
+          await elementMutations.updateElement.mutateAsync({
+            id: editingNode.id,
+            updates: updates,
+          });
+        },
+      });
+    } catch (error) {
+      console.error('[DEBUG] Error updating node:', error);
+    }
+  }, [editingNode, elementMutations, addAction]);
 
   if (isLoading) {
     return (
@@ -498,7 +541,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onPaneClick={onPaneClick}
-        onNodeClick={onNodeClick}
+        onNodeDoubleClick={onNodeDoubleClick}
         nodesDraggable={toolbarMode !== 'create-relationship'}
         nodesConnectable={toolbarMode === 'create-relationship'}
         elementsSelectable={true}
@@ -515,6 +558,15 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
           {toolbarMode === 'create-node' && `Click to place: ${toolbarData?.kind}`}
           {toolbarMode === 'create-relationship' && `Click nodes to connect: ${toolbarData?.type}`}
         </div>
+      )}
+
+      {/* Node Editor Modal */}
+      {editingNode && (
+        <NodeEditor
+          nodeData={editingNode.data}
+          onClose={() => setEditingNode(null)}
+          onSave={handleNodeEditSave}
+        />
       )}
     </div>
   );
