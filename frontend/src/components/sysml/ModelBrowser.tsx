@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronRight, ChevronDown, Search, List, Network } from 'lucide-react';
-import { useSysMLModel } from '../../hooks/useSysMLApi';
+import { ChevronRight, ChevronDown, Search, List, Network, Scissors, Copy, Clipboard, Edit, Type, Trash2 } from 'lucide-react';
+import { useSysMLModel, useSysMLMutations } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
 import { getNodeIcon } from '../../lib/sysml-diagram/icon-mappings';
+import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu';
 import type { SysMLNodeSpec } from '../../types';
 
 type ViewMode = 'kind' | 'tree';
@@ -10,10 +11,14 @@ type ViewMode = 'kind' | 'tree';
 export default function ModelBrowser() {
   const { selectedDiagram } = useDiagram();
   const { data: model, isLoading, error } = useSysMLModel(selectedDiagram?.viewpointId);
+  const mutations = useSysMLMutations();
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('kind');
   const [expandedKinds, setExpandedKinds] = useState<Set<string>>(new Set());
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: SysMLNodeSpec } | null>(null);
+  const [clipboard, setClipboard] = useState<{ action: 'cut' | 'copy'; node: SysMLNodeSpec } | null>(null);
+  const [editingNode, setEditingNode] = useState<{ id: string; name: string } | null>(null);
 
   // Group nodes by kind
   const groupedNodes = useMemo(() => {
@@ -120,6 +125,119 @@ export default function ModelBrowser() {
       .join(' ');
   };
 
+  const handleContextMenu = (e: React.MouseEvent, node: SysMLNodeSpec) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, node });
+  };
+
+  const handleCut = (node: SysMLNodeSpec) => {
+    setClipboard({ action: 'cut', node });
+  };
+
+  const handleCopy = (node: SysMLNodeSpec) => {
+    setClipboard({ action: 'copy', node });
+  };
+
+  const handlePaste = async () => {
+    if (!clipboard) return;
+
+    const newId = `${clipboard.node.kind}-${Date.now()}`;
+    const newNode: SysMLNodeSpec = {
+      kind: clipboard.node.kind,
+      spec: {
+        ...clipboard.node.spec,
+        id: newId,
+        name: `${clipboard.node.spec.name || clipboard.node.spec.id} (Copy)`,
+      },
+    };
+
+    try {
+      await mutations.createElement.mutateAsync(newNode);
+
+      // If it was a cut operation, delete the original
+      if (clipboard.action === 'cut') {
+        await mutations.deleteElement.mutateAsync(clipboard.node.spec.id);
+        setClipboard(null);
+      }
+    } catch (error) {
+      console.error('Paste error:', error);
+    }
+  };
+
+  const handleRename = (node: SysMLNodeSpec) => {
+    setEditingNode({ id: node.spec.id, name: node.spec.name || node.spec.id });
+  };
+
+  const handleRenameSubmit = async (nodeId: string, newName: string) => {
+    if (!newName.trim()) {
+      setEditingNode(null);
+      return;
+    }
+
+    try {
+      await mutations.updateElement.mutateAsync({
+        id: nodeId,
+        updates: { name: newName.trim() },
+      });
+      setEditingNode(null);
+    } catch (error) {
+      console.error('Rename error:', error);
+    }
+  };
+
+  const handleDelete = async (node: SysMLNodeSpec) => {
+    if (window.confirm(`Are you sure you want to delete "${node.spec.name || node.spec.id}"?`)) {
+      try {
+        await mutations.deleteElement.mutateAsync(node.spec.id);
+        // Clear clipboard if deleted node was in it
+        if (clipboard?.node.spec.id === node.spec.id) {
+          setClipboard(null);
+        }
+      } catch (error) {
+        console.error('Delete error:', error);
+      }
+    }
+  };
+
+  const getContextMenuItems = (node: SysMLNodeSpec): ContextMenuItem[] => {
+    return [
+      {
+        label: 'Cut',
+        icon: React.createElement(Scissors, { size: 14 }),
+        onClick: () => handleCut(node),
+      },
+      {
+        label: 'Copy',
+        icon: React.createElement(Copy, { size: 14 }),
+        onClick: () => handleCopy(node),
+      },
+      {
+        label: 'Paste',
+        icon: React.createElement(Clipboard, { size: 14 }),
+        onClick: handlePaste,
+        disabled: !clipboard,
+      },
+      { separator: true, label: '', onClick: () => {} },
+      {
+        label: 'Edit',
+        icon: React.createElement(Edit, { size: 14 }),
+        onClick: () => handleRename(node),
+      },
+      {
+        label: 'Rename',
+        icon: React.createElement(Type, { size: 14 }),
+        onClick: () => handleRename(node),
+      },
+      { separator: true, label: '', onClick: () => {} },
+      {
+        label: 'Delete',
+        icon: React.createElement(Trash2, { size: 14 }),
+        onClick: () => handleDelete(node),
+      },
+    ];
+  };
+
   if (isLoading) {
     return <div style={styles.container}>Loading model...</div>;
   }
@@ -211,27 +329,51 @@ export default function ModelBrowser() {
 
                     {isExpanded && (
                       <div style={styles.nodeList}>
-                        {nodes.map((node) => (
-                          <div
-                            key={node.spec.id}
-                            style={styles.nodeItem}
-                            title={node.spec.description || node.spec.documentation}
-                            draggable={true}
-                            onDragStart={(e) => {
-                              e.dataTransfer.setData('application/sysml-element', JSON.stringify({
-                                id: node.spec.id,
-                                kind: node.kind,
-                                name: node.spec.name || node.spec.id
-                              }));
-                              e.dataTransfer.effectAllowed = 'copy';
-                            }}
-                          >
-                            <span style={styles.nodeName}>{node.spec.name || node.spec.id}</span>
-                            {node.spec.status && (
-                              <span style={styles.nodeStatus}>{node.spec.status}</span>
-                            )}
-                          </div>
-                        ))}
+                        {nodes.map((node) => {
+                          const isEditing = editingNode?.id === node.spec.id;
+                          return (
+                            <div
+                              key={node.spec.id}
+                              style={styles.nodeItem}
+                              title={node.spec.description || node.spec.documentation}
+                              draggable={!isEditing}
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData('application/sysml-element', JSON.stringify({
+                                  id: node.spec.id,
+                                  kind: node.kind,
+                                  name: node.spec.name || node.spec.id
+                                }));
+                                e.dataTransfer.effectAllowed = 'copy';
+                              }}
+                              onContextMenu={(e) => handleContextMenu(e, node)}
+                            >
+                              {isEditing && editingNode ? (
+                                <input
+                                  type="text"
+                                  style={styles.renameInput}
+                                  value={editingNode.name}
+                                  onChange={(e) => setEditingNode({ id: editingNode.id, name: e.target.value })}
+                                  onBlur={() => handleRenameSubmit(node.spec.id, editingNode.name)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      handleRenameSubmit(node.spec.id, editingNode.name);
+                                    } else if (e.key === 'Escape') {
+                                      setEditingNode(null);
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                              ) : (
+                                <>
+                                  <span style={styles.nodeName}>{node.spec.name || node.spec.id}</span>
+                                  {node.spec.status && (
+                                    <span style={styles.nodeStatus}>{node.spec.status}</span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -267,6 +409,7 @@ export default function ModelBrowser() {
                         {items.map(({ node, children }) => {
                           const isNodeExpanded = expandedNodes.has(node.spec.id);
                           const hasChildren = children.length > 0;
+                          const isEditing = editingNode?.id === node.spec.id;
                           return (
                             <div key={node.spec.id}>
                               <div
@@ -274,7 +417,7 @@ export default function ModelBrowser() {
                                   ...styles.treeNodeItem,
                                   ...(hasChildren ? { fontWeight: 600 } : {})
                                 }}
-                                draggable={true}
+                                draggable={!isEditing}
                                 onDragStart={(e) => {
                                   e.dataTransfer.setData('application/sysml-element', JSON.stringify({
                                     id: node.spec.id,
@@ -283,6 +426,7 @@ export default function ModelBrowser() {
                                   }));
                                   e.dataTransfer.effectAllowed = 'copy';
                                 }}
+                                onContextMenu={(e) => handleContextMenu(e, node)}
                               >
                                 <span style={styles.treeToggle}>
                                   {hasChildren ? (
@@ -303,40 +447,85 @@ export default function ModelBrowser() {
                                     <span style={{ width: '12px', display: 'inline-block' }} />
                                   )}
                                 </span>
-                                <span style={styles.nodeName}>{node.spec.name || node.spec.id}</span>
+                                {isEditing && editingNode ? (
+                                  <input
+                                    type="text"
+                                    style={styles.renameInput}
+                                    value={editingNode.name}
+                                    onChange={(e) => setEditingNode({ id: editingNode.id, name: e.target.value })}
+                                    onBlur={() => handleRenameSubmit(node.spec.id, editingNode.name)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        handleRenameSubmit(node.spec.id, editingNode.name);
+                                      } else if (e.key === 'Escape') {
+                                        setEditingNode(null);
+                                      }
+                                    }}
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <span style={styles.nodeName}>{node.spec.name || node.spec.id}</span>
+                                )}
                               </div>
 
                               {/* Owned parts (children) */}
                               {isNodeExpanded && hasChildren && (
                                 <div style={styles.treeChildren}>
-                                  {children.map(({ usage, definition }) => (
-                                    <div
-                                      key={usage.spec.id}
-                                      style={styles.treeChildItem}
-                                      draggable={true}
-                                      onDragStart={(e) => {
-                                        e.dataTransfer.setData('application/sysml-element', JSON.stringify({
-                                          id: usage.spec.id,
-                                          kind: usage.kind,
-                                          name: usage.spec.name || usage.spec.id
-                                        }));
-                                        e.dataTransfer.effectAllowed = 'copy';
-                                      }}
-                                    >
-                                      <span style={styles.treePartIcon}>🔹</span>
-                                      <span style={styles.treePartName}>
-                                        {usage.spec.name || usage.spec.id}
-                                      </span>
-                                      <span style={styles.treePartType}>
-                                        : {definition.spec.name || definition.spec.id}
-                                      </span>
-                                      {usage.spec.multiplicity && (
-                                        <span style={styles.treePartMultiplicity}>
-                                          [{usage.spec.multiplicity}]
-                                        </span>
-                                      )}
-                                    </div>
-                                  ))}
+                                  {children.map(({ usage, definition }) => {
+                                    const isChildEditing = editingNode?.id === usage.spec.id;
+                                    return (
+                                      <div
+                                        key={usage.spec.id}
+                                        style={styles.treeChildItem}
+                                        draggable={!isChildEditing}
+                                        onDragStart={(e) => {
+                                          e.dataTransfer.setData('application/sysml-element', JSON.stringify({
+                                            id: usage.spec.id,
+                                            kind: usage.kind,
+                                            name: usage.spec.name || usage.spec.id
+                                          }));
+                                          e.dataTransfer.effectAllowed = 'copy';
+                                        }}
+                                        onContextMenu={(e) => handleContextMenu(e, usage)}
+                                      >
+                                        {isChildEditing && editingNode ? (
+                                          <>
+                                            <span style={styles.treePartIcon}>🔹</span>
+                                            <input
+                                              type="text"
+                                              style={styles.renameInput}
+                                              value={editingNode.name}
+                                              onChange={(e) => setEditingNode({ id: editingNode.id, name: e.target.value })}
+                                              onBlur={() => handleRenameSubmit(usage.spec.id, editingNode.name)}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                  handleRenameSubmit(usage.spec.id, editingNode.name);
+                                                } else if (e.key === 'Escape') {
+                                                  setEditingNode(null);
+                                                }
+                                              }}
+                                              autoFocus
+                                            />
+                                          </>
+                                        ) : (
+                                          <>
+                                            <span style={styles.treePartIcon}>🔹</span>
+                                            <span style={styles.treePartName}>
+                                              {usage.spec.name || usage.spec.id}
+                                            </span>
+                                            <span style={styles.treePartType}>
+                                              : {definition.spec.name || definition.spec.id}
+                                            </span>
+                                            {usage.spec.multiplicity && (
+                                              <span style={styles.treePartMultiplicity}>
+                                                [{usage.spec.multiplicity}]
+                                              </span>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>
@@ -350,6 +539,16 @@ export default function ModelBrowser() {
           )
         )}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={getContextMenuItems(contextMenu.node)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -519,5 +718,13 @@ const styles: Record<string, React.CSSProperties> = {
   treePartMultiplicity: {
     color: '#888',
     fontSize: '11px',
+  },
+  renameInput: {
+    flex: 1,
+    padding: '2px 4px',
+    fontSize: '13px',
+    border: '1px solid #007bff',
+    borderRadius: '2px',
+    outline: 'none',
   },
 };
