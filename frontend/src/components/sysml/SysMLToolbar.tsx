@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useViewpointTypes } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
 import { getNodeIcon, getEdgeIcon, uiActionIcons } from '../../lib/sysml-diagram/icon-mappings';
@@ -16,10 +16,62 @@ interface SysMLToolbarProps {
   canRedo?: boolean;
 }
 
+const DOCK_THRESHOLD = 50; // pixels from edge to snap
+
 export default function SysMLToolbar({ onModeChange, currentMode, currentData, onUndo, onRedo, canUndo, canRedo }: SysMLToolbarProps) {
   const { selectedDiagram } = useDiagram();
   const { data: types } = useViewpointTypes(selectedDiagram?.viewpointId);
-  const [isDocked] = useState(true); // TODO: Add drag functionality to undock
+  const [isDocked, setIsDocked] = useState(true);
+  const [position, setPosition] = useState({ x: 12, y: 12 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, initialX: 0, initialY: 0 });
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      initialX: position.x,
+      initialY: position.y,
+    };
+  }, [position]);
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+
+    const deltaX = e.clientX - dragStartRef.current.x;
+    const deltaY = e.clientY - dragStartRef.current.y;
+
+    const newX = dragStartRef.current.initialX + deltaX;
+    const newY = dragStartRef.current.initialY + deltaY;
+
+    setPosition({ x: newX, y: newY });
+    setIsDocked(false);
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+    setIsDragging(false);
+
+    // Check if we should dock to the left
+    if (e.clientX < DOCK_THRESHOLD) {
+      setIsDocked(true);
+      setPosition({ x: 12, y: 12 });
+    }
+  }, [isDragging]);
+
+  // Add/remove global mouse event listeners
+  React.useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp]);
 
   const formatKind = (kind: string) => {
     return kind
@@ -28,10 +80,16 @@ export default function SysMLToolbar({ onModeChange, currentMode, currentData, o
       .join(' ');
   };
 
+  const containerStyle = {
+    ...styles.container,
+    ...(isDocked ? styles.docked : { ...styles.floating, left: position.x, top: position.y }),
+    ...(isDragging ? styles.dragging : {}),
+  };
+
   if (!selectedDiagram) {
     return (
-      <div style={{ ...styles.container, ...(isDocked ? styles.docked : styles.floating) }}>
-        <div style={styles.header}>
+      <div style={containerStyle}>
+        <div style={styles.header} onMouseDown={handleMouseDown}>
           {React.createElement(GripVertical, { size: 16, style: styles.gripIcon })}
           <span style={styles.headerTitle}>Tools</span>
         </div>
@@ -42,8 +100,8 @@ export default function SysMLToolbar({ onModeChange, currentMode, currentData, o
 
   if (!types || (types.nodeKinds.length === 0 && types.edgeKinds.length === 0)) {
     return (
-      <div style={{ ...styles.container, ...(isDocked ? styles.docked : styles.floating) }}>
-        <div style={styles.header}>
+      <div style={containerStyle}>
+        <div style={styles.header} onMouseDown={handleMouseDown}>
           {React.createElement(GripVertical, { size: 16, style: styles.gripIcon })}
           <span style={styles.headerTitle}>Tools</span>
         </div>
@@ -53,9 +111,9 @@ export default function SysMLToolbar({ onModeChange, currentMode, currentData, o
   }
 
   return (
-    <div style={{ ...styles.container, ...(isDocked ? styles.docked : styles.floating) }}>
+    <div style={containerStyle}>
       {/* Header with grip */}
-      <div style={styles.header}>
+      <div style={styles.header} onMouseDown={handleMouseDown}>
         {React.createElement(GripVertical, { size: 16, style: styles.gripIcon })}
         <span style={styles.headerTitle}>Tools</span>
       </div>
@@ -181,11 +239,13 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 100,
   },
   floating: {
-    position: 'fixed',
-    left: '50%',
-    top: '50%',
-    transform: 'translate(-50%, -50%)',
+    position: 'absolute',
     zIndex: 1000,
+  },
+  dragging: {
+    cursor: 'grabbing',
+    userSelect: 'none',
+    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
   },
   header: {
     padding: '8px 12px',
