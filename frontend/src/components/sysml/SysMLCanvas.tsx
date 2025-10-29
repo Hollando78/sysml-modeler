@@ -6,7 +6,7 @@ import type { SysMLNodeSpec as LibSysMLNodeSpec, SysMLRelationshipSpec as LibSys
 import { useSysMLModel, useSysMLMutations, useDiagramMutations, useSysMLDiagram } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
-import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect } from 'reactflow';
+import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect, OnConnectEnd } from 'reactflow';
 import type { ToolbarMode } from './SysMLToolbar';
 import NodeEditor from './NodeEditor';
 import PromptModal from '../common/PromptModal';
@@ -49,6 +49,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: Node<SysMLNodeData> } | null>(null);
   const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edge: Edge } | null>(null);
+  const [connectingFrom, setConnectingFrom] = useState<{ nodeId: string; handleId?: string } | null>(null);
   const [clipboard, setClipboard] = useState<{ action: 'cut' | 'copy'; node: Node<SysMLNodeData> } | null>(null);
 
   // Notify parent of undo/redo state changes
@@ -163,8 +164,89 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
     if (!promptData || !activeDiagram) return;
 
-    // Check if this is a composition/aggregation relationship
-    if (promptData.kind === 'composition' && promptData.compositionData) {
+    // Check if this is a composition dropped on blank canvas
+    if (promptData.kind === 'composition-on-canvas' && promptData.compositionData) {
+      const { sourceId, compositionType } = promptData.compositionData;
+      const { x, y } = promptData.clickPosition;
+
+      console.log('[DEBUG] Creating part-usage on blank canvas:', {
+        sourceId,
+        partName: name,
+        compositionType,
+        position: { x, y },
+      });
+
+      try {
+        // 1. Create a new part-definition at the drop location to serve as the target
+        const targetId = `part-definition-${Date.now()}`;
+        await elementMutations.createElement.mutateAsync({
+          kind: 'part-definition' as any,
+          spec: {
+            id: targetId,
+            name: `${name}Definition`,
+          },
+        });
+
+        // 2. Add the new definition to the diagram
+        await diagramMutations.addElementsToDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementIds: [targetId],
+        });
+
+        // 3. Set position for the new definition
+        await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementId: targetId,
+          position: { x, y },
+        });
+
+        // 4. Create composition (which creates part-usage, definition rel, and composition rel)
+        const result = await elementMutations.createComposition.mutateAsync({
+          sourceId,
+          targetId,
+          partName: name,
+          compositionType,
+        });
+
+        console.log('[DEBUG] Composition on canvas created successfully:', result);
+
+        // Add undo/redo action
+        addAction({
+          type: 'create-composition',
+          data: { sourceId, targetId, partName: name, compositionType, position: { x, y }, ...result },
+          description: `Create ${compositionType} with part "${name}"`,
+          undo: async () => {
+            // Delete the part-usage and the target definition
+            await elementMutations.deleteElement.mutateAsync(result.partUsageId);
+            await elementMutations.deleteElement.mutateAsync(targetId);
+          },
+          redo: async () => {
+            // Recreate everything
+            await elementMutations.createElement.mutateAsync({
+              kind: 'part-definition' as any,
+              spec: { id: targetId, name: `${name}Definition` },
+            });
+            await diagramMutations.addElementsToDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementIds: [targetId],
+            });
+            await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementId: targetId,
+              position: { x, y },
+            });
+            await elementMutations.createComposition.mutateAsync({
+              sourceId,
+              targetId,
+              partName: name,
+              compositionType,
+            });
+          },
+        });
+      } catch (error) {
+        console.error('[DEBUG] Error creating composition on canvas:', error);
+      }
+    } else if (promptData.kind === 'composition' && promptData.compositionData) {
       const { sourceId, targetId, compositionType } = promptData.compositionData;
 
       console.log('[DEBUG] Creating SysML v2.0 compliant composition:', {
@@ -538,6 +620,62 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       }
     },
     [toolbarMode, toolbarData, elementMutations, addAction]
+  );
+
+  const onConnectStart = useCallback(
+    (_event: React.MouseEvent | React.TouchEvent, { nodeId, handleId }: { nodeId: string | null; handleId: string | null }) => {
+      if (nodeId) {
+        setConnectingFrom({ nodeId, handleId: handleId || undefined });
+        console.log('[DEBUG] Connection started from node:', nodeId);
+      }
+    },
+    []
+  );
+
+  const onConnectEnd: OnConnectEnd = useCallback(
+    (event) => {
+      if (!connectingFrom || !activeDiagram) {
+        setConnectingFrom(null);
+        return;
+      }
+
+      // Check if this is a composition/aggregation in progress
+      if (toolbarMode === 'create-relationship' &&
+          toolbarData?.type &&
+          (toolbarData.type === 'composition' || toolbarData.type === 'aggregation')) {
+
+        // Get the canvas coordinates where the connection was dropped
+        const target = event.target as HTMLElement;
+        const reactFlowBounds = target.closest('.react-flow')?.getBoundingClientRect();
+
+        if (reactFlowBounds && event instanceof MouseEvent) {
+          // Calculate position relative to the canvas
+          const x = event.clientX - reactFlowBounds.left;
+          const y = event.clientY - reactFlowBounds.top;
+
+          console.log('[DEBUG] Composition dropped on blank canvas', {
+            sourceNodeId: connectingFrom.nodeId,
+            position: { x, y },
+            compositionType: toolbarData.type
+          });
+
+          // Show prompt to create a new part-usage at this location
+          setPromptData({
+            kind: 'composition-on-canvas',
+            clickPosition: { x, y },
+            compositionData: {
+              sourceId: connectingFrom.nodeId,
+              targetId: '', // Will be created
+              compositionType: toolbarData.type as 'composition' | 'aggregation',
+            },
+          });
+          setShowPrompt(true);
+        }
+      }
+
+      setConnectingFrom(null);
+    },
+    [connectingFrom, activeDiagram, toolbarMode, toolbarData]
   );
 
   const onNodeDoubleClick = useCallback((_event: React.MouseEvent, node: Node) => {
@@ -1030,6 +1168,8 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onConnectStart={onConnectStart}
+        onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
         onNodeDoubleClick={onNodeDoubleClick}
         onNodeContextMenu={onNodeContextMenu}
@@ -1064,14 +1204,22 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       {/* Prompt Modal for creating nodes and compositions */}
       {showPrompt && promptData && (
         <PromptModal
-          title={promptData.kind === 'composition' ? 'Create Part' : 'Create Element'}
+          title={
+            promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
+              ? 'Create Part'
+              : 'Create Element'
+          }
           message={
-            promptData.kind === 'composition'
-              ? `Enter name for the part usage (${promptData.compositionData?.compositionType}):`
+            promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
+              ? `Enter name for the part (${promptData.compositionData?.compositionType}):`
               : `Enter name for ${promptData.kind.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}:`
           }
           defaultValue=""
-          placeholder={promptData.kind === 'composition' ? 'Part name' : 'Element name'}
+          placeholder={
+            promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
+              ? 'Part name'
+              : 'Element name'
+          }
           onConfirm={handlePromptConfirm}
           onCancel={handlePromptCancel}
         />
