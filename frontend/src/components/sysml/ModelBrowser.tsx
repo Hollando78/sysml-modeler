@@ -284,21 +284,25 @@ export default function ModelBrowser() {
                                   e.dataTransfer.effectAllowed = 'copy';
                                 }}
                               >
-                                {hasChildren && (
-                                  <span
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleNode(node.spec.id);
-                                    }}
-                                    style={styles.treeToggle}
-                                  >
-                                    {isNodeExpanded ? (
-                                      <ChevronDown size={12} />
-                                    ) : (
-                                      <ChevronRight size={12} />
-                                    )}
-                                  </span>
-                                )}
+                                <span style={styles.treeToggle}>
+                                  {hasChildren ? (
+                                    <span
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleNode(node.spec.id);
+                                      }}
+                                      style={{ cursor: 'pointer' }}
+                                    >
+                                      {isNodeExpanded ? (
+                                        <ChevronDown size={12} />
+                                      ) : (
+                                        <ChevronRight size={12} />
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span style={{ width: '12px', display: 'inline-block' }} />
+                                  )}
+                                </span>
                                 <span style={styles.nodeName}>{node.spec.name || node.spec.id}</span>
                               </div>
 
@@ -483,9 +487,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   treeToggle: {
     display: 'inline-flex',
-    cursor: 'pointer',
-    padding: '2px',
-    borderRadius: '2px',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '16px',
+    flexShrink: 0,
   },
   treeChildren: {
     paddingLeft: '20px',
