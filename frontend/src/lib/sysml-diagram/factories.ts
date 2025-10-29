@@ -866,7 +866,8 @@ export const createRelationshipEdge = (spec: SysMLRelationshipSpec): SysMLReactF
   target: spec.target,
   data: {
     kind: spec.type,
-    label: spec.label,
+    // Use spec.label if provided, otherwise use the relationship type formatted nicely
+    label: spec.label || spec.type.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
     rationale: spec.rationale,
     trigger: spec.trigger,
     guard: spec.guard,
