@@ -54,13 +54,13 @@ export default function ModelBrowser() {
   const treeStructure = useMemo(() => {
     if (!model) return {};
 
-    // Build a map of owned parts for each definition
+    // Build a map of owned parts for each owner (can be definition or part-usage)
     const ownershipMap: Record<string, Array<{ usage: SysMLNodeSpec; definition: SysMLNodeSpec }>> = {};
 
     // Find all composition/aggregation relationships
     model.relationships.forEach((rel) => {
       if (rel.type === 'composition' || rel.type === 'aggregation') {
-        // rel.source is the owner (definition), rel.target is the owned part-usage
+        // rel.source is the owner (definition or part-usage), rel.target is the owned part-usage
         const partUsage = model.nodes.find((n) => n.spec.id === rel.target);
         if (!partUsage) return;
 
@@ -80,18 +80,28 @@ export default function ModelBrowser() {
       }
     });
 
+    // Recursive function to get children for any node (definition or part-usage)
+    const getChildren = (nodeId: string): Array<{ usage: SysMLNodeSpec; definition: SysMLNodeSpec; children: any[] }> => {
+      const directChildren = ownershipMap[nodeId] || [];
+      return directChildren.map(({ usage, definition }) => ({
+        usage,
+        definition,
+        children: getChildren(usage.spec.id) // Recursively get children of the part-usage
+      }));
+    };
+
     // Group definitions by kind
-    const tree: Record<string, Array<{ node: SysMLNodeSpec; children: typeof ownershipMap[string] }>> = {};
+    const tree: Record<string, Array<{ node: SysMLNodeSpec; children: any[] }>> = {};
 
     model.nodes.forEach((node) => {
-      // Only show definition types in tree
+      // Only show definition types at the root level
       if (node.kind.endsWith('-definition')) {
         if (!tree[node.kind]) {
           tree[node.kind] = [];
         }
         tree[node.kind].push({
           node,
-          children: ownershipMap[node.spec.id] || []
+          children: getChildren(node.spec.id)
         });
       }
     });
@@ -479,69 +489,105 @@ export default function ModelBrowser() {
                                 )}
                               </div>
 
-                              {/* Owned parts (children) */}
+                              {/* Owned parts (children) - recursively rendered */}
                               {isNodeExpanded && hasChildren && (
                                 <div style={styles.treeChildren}>
-                                  {children.map(({ usage, definition }) => {
-                                    const isChildEditing = editingNode?.id === usage.spec.id;
-                                    const isChildHovered = hoveredNode === usage.spec.id;
-                                    return (
-                                      <div
-                                        key={usage.spec.id}
-                                        style={{
-                                          ...styles.treeChildItem,
-                                          ...(isChildHovered ? styles.treeChildItemHover : {}),
-                                        }}
-                                        draggable={!isChildEditing}
-                                        onDragStart={(e) => {
-                                          e.dataTransfer.setData('application/sysml-element', JSON.stringify({
-                                            id: usage.spec.id,
-                                            kind: usage.kind,
-                                            name: usage.spec.name || usage.spec.id
-                                          }));
-                                          e.dataTransfer.effectAllowed = 'copy';
-                                        }}
-                                        onContextMenu={(e) => handleContextMenu(e, usage)}
-                                        onMouseEnter={() => setHoveredNode(usage.spec.id)}
-                                        onMouseLeave={() => setHoveredNode(null)}
-                                      >
-                                        {isChildEditing && editingNode ? (
-                                          <>
-                                            <span style={styles.treePartIcon}>🔹</span>
-                                            <input
-                                              type="text"
-                                              style={styles.renameInput}
-                                              value={editingNode.name}
-                                              onChange={(e) => setEditingNode({ id: editingNode.id, name: e.target.value })}
-                                              onBlur={() => handleRenameSubmit(usage.spec.id, editingNode.name)}
-                                              onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                  handleRenameSubmit(usage.spec.id, editingNode.name);
-                                                } else if (e.key === 'Escape') {
-                                                  setEditingNode(null);
-                                                }
-                                              }}
-                                              autoFocus
-                                            />
-                                          </>
-                                        ) : (
-                                          <>
-                                            <span style={styles.treePartIcon}>🔹</span>
-                                            <span style={styles.treePartName}>
-                                              {usage.spec.name || usage.spec.id}
-                                            </span>
-                                            <span style={styles.treePartType}>
-                                              : {definition.spec.name || definition.spec.id}
-                                            </span>
-                                            {usage.spec.multiplicity && (
-                                              <span style={styles.treePartMultiplicity}>
-                                                [{usage.spec.multiplicity}]
+                                  {children.map(({ usage, definition, children: nestedChildren }) => {
+                                    const renderPartUsage = (
+                                      childUsage: typeof usage,
+                                      childDef: typeof definition,
+                                      childNested: typeof nestedChildren,
+                                      depth: number = 0
+                                    ): React.ReactNode => {
+                                      const childHasNested = childNested && childNested.length > 0;
+                                      const childIsExpanded = expandedNodes.has(childUsage.spec.id);
+                                      const childIsEditing = editingNode?.id === childUsage.spec.id;
+                                      const childIsHovered = hoveredNode === childUsage.spec.id;
+
+                                      return (
+                                        <div key={childUsage.spec.id}>
+                                          <div
+                                            style={{
+                                              ...styles.treeChildItem,
+                                              paddingLeft: `${depth * 16}px`,
+                                              ...(childIsHovered ? styles.treeChildItemHover : {}),
+                                            }}
+                                            draggable={!childIsEditing}
+                                            onDragStart={(e) => {
+                                              e.dataTransfer.setData('application/sysml-element', JSON.stringify({
+                                                id: childUsage.spec.id,
+                                                kind: childUsage.kind,
+                                                name: childUsage.spec.name || childUsage.spec.id
+                                              }));
+                                              e.dataTransfer.effectAllowed = 'copy';
+                                            }}
+                                            onContextMenu={(e) => handleContextMenu(e, childUsage)}
+                                            onMouseEnter={() => setHoveredNode(childUsage.spec.id)}
+                                            onMouseLeave={() => setHoveredNode(null)}
+                                          >
+                                            {childHasNested && (
+                                              <span
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  toggleNode(childUsage.spec.id);
+                                                }}
+                                                style={{ cursor: 'pointer', marginRight: '4px' }}
+                                              >
+                                                {childIsExpanded ? (
+                                                  <ChevronDown size={12} />
+                                                ) : (
+                                                  <ChevronRight size={12} />
+                                                )}
                                               </span>
                                             )}
-                                          </>
-                                        )}
-                                      </div>
-                                    );
+                                            {childIsEditing && editingNode ? (
+                                              <>
+                                                <span style={styles.treePartIcon}>🔹</span>
+                                                <input
+                                                  type="text"
+                                                  style={styles.renameInput}
+                                                  value={editingNode.name}
+                                                  onChange={(e) => setEditingNode({ id: editingNode.id, name: e.target.value })}
+                                                  onBlur={() => handleRenameSubmit(childUsage.spec.id, editingNode.name)}
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                      handleRenameSubmit(childUsage.spec.id, editingNode.name);
+                                                    } else if (e.key === 'Escape') {
+                                                      setEditingNode(null);
+                                                    }
+                                                  }}
+                                                  autoFocus
+                                                />
+                                              </>
+                                            ) : (
+                                              <>
+                                                <span style={styles.treePartIcon}>🔹</span>
+                                                <span style={styles.treePartName}>
+                                                  {childUsage.spec.name || childUsage.spec.id}
+                                                </span>
+                                                <span style={styles.treePartType}>
+                                                  : {childDef.spec.name || childDef.spec.id}
+                                                </span>
+                                                {childUsage.spec.multiplicity && (
+                                                  <span style={styles.treePartMultiplicity}>
+                                                    [{childUsage.spec.multiplicity}]
+                                                  </span>
+                                                )}
+                                              </>
+                                            )}
+                                          </div>
+                                          {childIsExpanded && childHasNested && (
+                                            <div style={styles.treeChildren}>
+                                              {childNested.map((nested: any) =>
+                                                renderPartUsage(nested.usage, nested.definition, nested.children, depth + 1)
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    };
+
+                                    return renderPartUsage(usage, definition, nestedChildren, 0);
                                   })}
                                 </div>
                               )}
