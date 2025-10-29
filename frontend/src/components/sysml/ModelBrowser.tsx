@@ -115,6 +115,15 @@ export default function ModelBrowser() {
                           key={node.spec.id}
                           style={styles.nodeItem}
                           title={node.spec.description || node.spec.documentation}
+                          draggable={true}
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('application/sysml-element', JSON.stringify({
+                              id: node.spec.id,
+                              kind: node.kind,
+                              name: node.spec.name || node.spec.id
+                            }));
+                            e.dataTransfer.effectAllowed = 'copy';
+                          }}
                         >
                           <span style={styles.nodeName}>{node.spec.name || node.spec.id}</span>
                           {node.spec.status && (

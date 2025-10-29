@@ -499,6 +499,78 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     }
   }, [editingNode, elementMutations, addAction]);
 
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+
+    if (!activeDiagram) return;
+
+    try {
+      const data = e.dataTransfer.getData('application/sysml-element');
+      if (!data) return;
+
+      const element = JSON.parse(data);
+      console.log('[DEBUG] Dropped element:', element);
+
+      // Get the drop position relative to the diagram
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left - 110; // Offset for node center
+      const y = e.clientY - rect.top - 60;
+
+      // Check if element is already in the diagram
+      const isInDiagram = activeDiagram.elementIds?.includes(element.id);
+
+      if (!isInDiagram) {
+        // Add element to diagram
+        await diagramMutations.addElementsToDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementIds: [element.id],
+        });
+      }
+
+      // Update element position
+      await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        elementId: element.id,
+        position: { x, y },
+      });
+
+      // Add undo/redo action
+      addAction({
+        type: 'add-to-diagram',
+        data: { id: element.id, kind: element.kind, name: element.name, position: { x, y }, diagramId: activeDiagram.id, wasInDiagram: isInDiagram },
+        description: `Add ${element.kind} "${element.name}" to diagram`,
+        undo: async () => {
+          if (!isInDiagram) {
+            await diagramMutations.removeElementFromDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementId: element.id,
+            });
+          }
+        },
+        redo: async () => {
+          if (!isInDiagram) {
+            await diagramMutations.addElementsToDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementIds: [element.id],
+            });
+          }
+          await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementId: element.id,
+            position: { x, y },
+          });
+        },
+      });
+    } catch (error) {
+      console.error('[DEBUG] Error handling drop:', error);
+    }
+  }, [activeDiagram, diagramMutations, addAction]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+
   if (isLoading) {
     return (
       <div style={styles.container}>
@@ -528,6 +600,8 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       style={styles.container}
       onClick={(e) => console.log('[DEBUG] Container div clicked!', e.target)}
       onMouseDown={(e) => console.log('[DEBUG] Container mousedown', e.target)}
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
     >
       {/* Visual debug indicator */}
       <div style={styles.debugIndicator}>
