@@ -372,6 +372,29 @@ router.post('/compositions', async (req: Request, res: Response) => {
 });
 
 /**
+ * PATCH /api/sysml/relationships/:id
+ * Update a relationship (e.g., label)
+ */
+router.patch('/relationships/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const updateSchema = z.object({
+      label: z.string().optional(),
+    });
+    const updates = updateSchema.parse(req.body);
+    await modelService.updateRelationship(id, updates);
+    res.json({ success: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+    } else {
+      console.error('Error updating relationship:', error);
+      res.status(500).json({ error: 'Failed to update relationship' });
+    }
+  }
+});
+
+/**
  * DELETE /api/sysml/relationships/:id
  * Delete a relationship
  */

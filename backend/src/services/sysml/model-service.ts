@@ -242,6 +242,34 @@ export async function createRelationship(relationshipSpec: SysMLRelationshipSpec
 }
 
 /**
+ * Update a relationship
+ */
+export async function updateRelationship(id: string, updates: Partial<any>): Promise<void> {
+  const session = getSession();
+  try {
+    const properties = specToNeo4jProperties(updates);
+    properties.updatedAt = new Date().toISOString();
+
+    // Remove id from updates (shouldn't be updated)
+    delete properties.id;
+
+    const query = `
+      MATCH ()-[r {id: $id}]->()
+      SET r += $properties
+      RETURN r
+    `;
+
+    const result = await session.run(query, { id, properties });
+
+    if (result.records.length === 0) {
+      throw new Error(`Relationship with id ${id} not found`);
+    }
+  } finally {
+    await session.close();
+  }
+}
+
+/**
  * Delete a relationship
  */
 export async function deleteRelationship(id: string): Promise<void> {

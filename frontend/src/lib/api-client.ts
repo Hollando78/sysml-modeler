@@ -66,6 +66,13 @@ export const apiClient = {
     });
   },
 
+  async updateRelationship(id: string, updates: { label?: string }): Promise<void> {
+    await fetchJSON(`${API_BASE}/relationships/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  },
+
   async deleteRelationship(id: string): Promise<void> {
     await fetchJSON(`${API_BASE}/relationships/${id}`, {
       method: 'DELETE',

@@ -53,6 +53,12 @@ export function useSysMLMutations(_viewpointId?: string) {
     onSuccess: invalidateModel,
   });
 
+  const updateRelationshipMutation = useMutation({
+    mutationFn: ({ id, updates }: { id: string; updates: { label?: string } }) =>
+      apiClient.updateRelationship(id, updates),
+    onSuccess: invalidateModel,
+  });
+
   const deleteRelationshipMutation = useMutation({
     mutationFn: (id: string) => apiClient.deleteRelationship(id),
     onSuccess: invalidateModel,
@@ -91,6 +97,7 @@ export function useSysMLMutations(_viewpointId?: string) {
     updateElement: updateElementMutation,
     deleteElement: deleteElementMutation,
     createRelationship: createRelationshipMutation,
+    updateRelationship: updateRelationshipMutation,
     deleteRelationship: deleteRelationshipMutation,
     createComposition: createCompositionMutation,
     updatePosition: updatePositionMutation,

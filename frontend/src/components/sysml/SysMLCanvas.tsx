@@ -48,6 +48,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     };
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: Node<SysMLNodeData> } | null>(null);
+  const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edge: Edge } | null>(null);
   const [clipboard, setClipboard] = useState<{ action: 'cut' | 'copy'; node: Node<SysMLNodeData> } | null>(null);
 
   // Notify parent of undo/redo state changes
@@ -790,6 +791,130 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     ];
   }, [clipboard, handleCut, handleCopy, handlePaste, handleRename, handleDelete, handleShowRelatedElements]);
 
+  // Edge Context Menu Handlers
+  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
+    event.preventDefault();
+    setEdgeContextMenu({ x: event.clientX, y: event.clientY, edge });
+  }, []);
+
+  const handleEditEdgeLabel = useCallback(async (edge: Edge) => {
+    const newLabel = window.prompt('Enter new label for relationship:', edge.data?.label || '');
+    if (newLabel !== null) {
+      try {
+        await elementMutations.updateRelationship.mutateAsync({
+          id: edge.id,
+          updates: { label: newLabel },
+        });
+      } catch (error) {
+        console.error('Edit edge label error:', error);
+      }
+    }
+  }, [elementMutations]);
+
+  const handleDeleteEdge = useCallback(async (edge: Edge) => {
+    if (window.confirm(`Are you sure you want to delete this ${edge.data?.kind || 'relationship'}?`)) {
+      try {
+        await elementMutations.deleteRelationship.mutateAsync(edge.id);
+
+        // Add undo/redo action
+        addAction({
+          type: 'delete-edge',
+          data: {
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            type: edge.data?.kind,
+          },
+          description: `Delete ${edge.data?.kind || 'relationship'}`,
+          undo: async () => {
+            // Would need to recreate the relationship
+            await elementMutations.createRelationship.mutateAsync({
+              id: edge.id,
+              type: edge.data?.kind || 'dependency',
+              source: edge.source,
+              target: edge.target,
+              label: edge.data?.label,
+            });
+          },
+          redo: async () => {
+            await elementMutations.deleteRelationship.mutateAsync(edge.id);
+          },
+        });
+      } catch (error) {
+        console.error('Delete edge error:', error);
+      }
+    }
+  }, [elementMutations, addAction]);
+
+  const handleReverseEdge = useCallback(async (edge: Edge) => {
+    if (!activeDiagram) return;
+
+    try {
+      // Delete the old edge
+      await elementMutations.deleteRelationship.mutateAsync(edge.id);
+
+      // Create a new edge with reversed direction
+      const newId = `${edge.target}-${edge.data?.kind || 'dependency'}-${edge.source}`;
+      await elementMutations.createRelationship.mutateAsync({
+        id: newId,
+        type: edge.data?.kind || 'dependency',
+        source: edge.target, // Reversed
+        target: edge.source, // Reversed
+        label: edge.data?.label,
+      });
+
+      // Add undo/redo action
+      addAction({
+        type: 'create-edge',
+        data: { oldEdge: edge, newEdgeId: newId },
+        description: `Reverse ${edge.data?.kind || 'relationship'} direction`,
+        undo: async () => {
+          await elementMutations.deleteRelationship.mutateAsync(newId);
+          await elementMutations.createRelationship.mutateAsync({
+            id: edge.id,
+            type: edge.data?.kind || 'dependency',
+            source: edge.source,
+            target: edge.target,
+            label: edge.data?.label,
+          });
+        },
+        redo: async () => {
+          await elementMutations.deleteRelationship.mutateAsync(edge.id);
+          await elementMutations.createRelationship.mutateAsync({
+            id: newId,
+            type: edge.data?.kind || 'dependency',
+            source: edge.target,
+            target: edge.source,
+            label: edge.data?.label,
+          });
+        },
+      });
+    } catch (error) {
+      console.error('Reverse edge error:', error);
+    }
+  }, [activeDiagram, elementMutations, addAction]);
+
+  const getEdgeContextMenuItems = useCallback((edge: Edge): ContextMenuItem[] => {
+    return [
+      {
+        label: 'Edit label',
+        icon: React.createElement(Edit, { size: 14 }),
+        onClick: () => handleEditEdgeLabel(edge),
+      },
+      {
+        label: 'Reverse direction',
+        icon: React.createElement(Network, { size: 14 }),
+        onClick: () => handleReverseEdge(edge),
+      },
+      { separator: true, label: '', onClick: () => {} },
+      {
+        label: 'Delete',
+        icon: React.createElement(Trash2, { size: 14 }),
+        onClick: () => handleDeleteEdge(edge),
+      },
+    ];
+  }, [handleEditEdgeLabel, handleReverseEdge, handleDeleteEdge]);
+
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
 
@@ -908,6 +1033,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         onPaneClick={onPaneClick}
         onNodeDoubleClick={onNodeDoubleClick}
         onNodeContextMenu={onNodeContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
         nodesDraggable={toolbarMode !== 'create-relationship'}
         nodesConnectable={toolbarMode === 'create-relationship'}
         elementsSelectable={true}
@@ -951,13 +1077,23 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         />
       )}
 
-      {/* Context Menu */}
+      {/* Node Context Menu */}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           items={getContextMenuItems(contextMenu.node)}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Edge Context Menu */}
+      {edgeContextMenu && (
+        <ContextMenu
+          x={edgeContextMenu.x}
+          y={edgeContextMenu.y}
+          items={getEdgeContextMenuItems(edgeContextMenu.edge)}
+          onClose={() => setEdgeContextMenu(null)}
         />
       )}
     </div>
