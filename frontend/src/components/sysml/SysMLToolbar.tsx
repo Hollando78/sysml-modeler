@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useViewpointTypes } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
 import { getNodeIcon, getEdgeIcon, uiActionIcons } from '../../lib/sysml-diagram/icon-mappings';
+import { GripVertical } from 'lucide-react';
 
 export type ToolbarMode = 'select' | 'create-node' | 'create-relationship';
 
@@ -18,6 +19,7 @@ interface SysMLToolbarProps {
 export default function SysMLToolbar({ onModeChange, currentMode, currentData, onUndo, onRedo, canUndo, canRedo }: SysMLToolbarProps) {
   const { selectedDiagram } = useDiagram();
   const { data: types } = useViewpointTypes(selectedDiagram?.viewpointId);
+  const [isDocked] = useState(true); // TODO: Add drag functionality to undock
 
   const formatKind = (kind: string) => {
     return kind
@@ -28,22 +30,36 @@ export default function SysMLToolbar({ onModeChange, currentMode, currentData, o
 
   if (!selectedDiagram) {
     return (
-      <div style={styles.container}>
-        <div style={styles.message}>Select a diagram to see available tools</div>
+      <div style={{ ...styles.container, ...(isDocked ? styles.docked : styles.floating) }}>
+        <div style={styles.header}>
+          {React.createElement(GripVertical, { size: 16, style: styles.gripIcon })}
+          <span style={styles.headerTitle}>Tools</span>
+        </div>
+        <div style={styles.message}>Select a diagram</div>
       </div>
     );
   }
 
   if (!types || (types.nodeKinds.length === 0 && types.edgeKinds.length === 0)) {
     return (
-      <div style={styles.container}>
-        <div style={styles.message}>No tools available for this viewpoint</div>
+      <div style={{ ...styles.container, ...(isDocked ? styles.docked : styles.floating) }}>
+        <div style={styles.header}>
+          {React.createElement(GripVertical, { size: 16, style: styles.gripIcon })}
+          <span style={styles.headerTitle}>Tools</span>
+        </div>
+        <div style={styles.message}>No tools available</div>
       </div>
     );
   }
 
   return (
-    <div style={styles.container}>
+    <div style={{ ...styles.container, ...(isDocked ? styles.docked : styles.floating) }}>
+      {/* Header with grip */}
+      <div style={styles.header}>
+        {React.createElement(GripVertical, { size: 16, style: styles.gripIcon })}
+        <span style={styles.headerTitle}>Tools</span>
+      </div>
+
       {/* Undo/Redo Section */}
       <div style={styles.section}>
         <button
@@ -56,6 +72,7 @@ export default function SysMLToolbar({ onModeChange, currentMode, currentData, o
           title="Undo (Ctrl+Z / Cmd+Z)"
         >
           {React.createElement(uiActionIcons.undo, { size: 16, style: styles.icon })}
+          <span>Undo</span>
         </button>
         <button
           style={{
@@ -67,48 +84,58 @@ export default function SysMLToolbar({ onModeChange, currentMode, currentData, o
           title="Redo (Ctrl+Y / Cmd+Shift+Z)"
         >
           {React.createElement(uiActionIcons.redo, { size: 16, style: styles.icon })}
+          <span>Redo</span>
         </button>
       </div>
 
+      <div style={styles.separator} />
+
+      {/* Select Button */}
       <div style={styles.section}>
-        <div style={styles.sectionTitle}>Elements</div>
-        <div style={styles.buttonGroup}>
-          <button
-            style={{
-              ...styles.button,
-              ...(currentMode === 'select' ? styles.buttonActive : {}),
-            }}
-            onClick={() => onModeChange('select')}
-            title="Select and move elements"
-          >
-            {React.createElement(uiActionIcons.select, { size: 16, style: styles.icon })}
-            <span>Select</span>
-          </button>
-          {types.nodeKinds.map((kind) => {
-            const Icon = getNodeIcon(kind);
-            const isActive = currentMode === 'create-node' && currentData?.kind === kind;
-            return (
-              <button
-                key={kind}
-                style={{
-                  ...styles.button,
-                  ...(isActive ? styles.buttonActive : {}),
-                }}
-                onClick={() => onModeChange('create-node', { kind })}
-                title={`Create ${formatKind(kind)}`}
-              >
-                <Icon size={16} style={styles.icon} />
-                <span>{formatKind(kind)}</span>
-              </button>
-            );
-          })}
-        </div>
+        <button
+          style={{
+            ...styles.button,
+            ...(currentMode === 'select' ? styles.buttonActive : {}),
+          }}
+          onClick={() => onModeChange('select')}
+          title="Select and move elements"
+        >
+          {React.createElement(uiActionIcons.select, { size: 16, style: styles.icon })}
+          <span>Select</span>
+        </button>
       </div>
 
+      <div style={styles.separator} />
+
+      {/* Elements Section */}
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Elements</div>
+        {types.nodeKinds.map((kind) => {
+          const Icon = getNodeIcon(kind);
+          const isActive = currentMode === 'create-node' && currentData?.kind === kind;
+          return (
+            <button
+              key={kind}
+              style={{
+                ...styles.button,
+                ...(isActive ? styles.buttonActive : {}),
+              }}
+              onClick={() => onModeChange('create-node', { kind })}
+              title={`Create ${formatKind(kind)}`}
+            >
+              {React.createElement(Icon, { size: 16, style: styles.icon })}
+              <span>{formatKind(kind)}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Relationships Section */}
       {types.edgeKinds.length > 0 && (
-        <div style={styles.section}>
-          <div style={styles.sectionTitle}>Relationships</div>
-          <div style={styles.buttonGroup}>
+        <>
+          <div style={styles.separator} />
+          <div style={styles.section}>
+            <div style={styles.sectionTitle}>Relationships</div>
             {types.edgeKinds.map((type) => {
               const Icon = getEdgeIcon(type);
               const isActive = currentMode === 'create-relationship' && currentData?.type === type;
@@ -122,13 +149,13 @@ export default function SysMLToolbar({ onModeChange, currentMode, currentData, o
                   onClick={() => onModeChange('create-relationship', { type })}
                   title={`Create ${formatKind(type)} relationship`}
                 >
-                  <Icon size={16} style={styles.icon} />
+                  {React.createElement(Icon, { size: 16, style: styles.icon })}
                   <span>{formatKind(type)}</span>
                 </button>
               );
             })}
           </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -136,47 +163,93 @@ export default function SysMLToolbar({ onModeChange, currentMode, currentData, o
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    padding: '12px',
-    borderBottom: '1px solid #ddd',
-    backgroundColor: '#f9f9f9',
+    backgroundColor: 'white',
+    border: '1px solid #ddd',
+    borderRadius: '8px',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
     display: 'flex',
-    gap: '24px',
-    flexWrap: 'wrap',
+    flexDirection: 'column',
+    minWidth: '220px',
+    maxWidth: '220px',
+    maxHeight: 'calc(100vh - 180px)',
+    overflowY: 'auto',
   },
-  message: {
-    color: '#666',
-    fontSize: '14px',
-    fontStyle: 'italic',
+  docked: {
+    position: 'absolute',
+    left: '12px',
+    top: '12px',
+    zIndex: 100,
   },
-  section: {
+  floating: {
+    position: 'fixed',
+    left: '50%',
+    top: '50%',
+    transform: 'translate(-50%, -50%)',
+    zIndex: 1000,
+  },
+  header: {
+    padding: '8px 12px',
+    borderBottom: '1px solid #e0e0e0',
+    backgroundColor: '#f9f9f9',
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
+    cursor: 'grab',
+    borderTopLeftRadius: '8px',
+    borderTopRightRadius: '8px',
   },
-  sectionTitle: {
-    fontSize: '13px',
+  gripIcon: {
+    color: '#999',
+    flexShrink: 0,
+  },
+  headerTitle: {
+    fontSize: '14px',
     fontWeight: 600,
     color: '#333',
-    marginRight: '4px',
+    flex: 1,
   },
-  buttonGroup: {
+  message: {
+    padding: '12px',
+    color: '#666',
+    fontSize: '13px',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  section: {
     display: 'flex',
-    gap: '6px',
-    flexWrap: 'wrap',
+    flexDirection: 'column',
+    gap: '4px',
+    padding: '8px',
+  },
+  sectionTitle: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    padding: '4px 8px',
+    marginBottom: '4px',
+  },
+  separator: {
+    height: '1px',
+    backgroundColor: '#e0e0e0',
+    margin: '0 8px',
   },
   button: {
-    padding: '6px 12px',
+    padding: '8px 12px',
     fontSize: '13px',
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: '#ccc',
+    borderColor: '#ddd',
     borderRadius: '4px',
     backgroundColor: 'white',
     cursor: 'pointer',
     transition: 'all 0.2s',
     display: 'flex',
     alignItems: 'center',
-    gap: '6px',
+    gap: '8px',
+    width: '100%',
+    textAlign: 'left',
   },
   icon: {
     flexShrink: 0,

@@ -54,17 +54,6 @@ export default function SysMLModelingView() {
         </div>
       </div>
 
-      {/* Toolbar */}
-      <SysMLToolbar
-        onModeChange={handleModeChange}
-        currentMode={toolbarMode}
-        currentData={toolbarData}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        canUndo={canUndo}
-        canRedo={canRedo}
-      />
-
       {/* Main Content */}
       <div style={styles.content}>
         {/* Model Browser (Left Panel) */}
@@ -72,7 +61,7 @@ export default function SysMLModelingView() {
           <ModelBrowser />
         </div>
 
-        {/* Canvas (Right Panel) */}
+        {/* Canvas (Right Panel) - Toolbar now floats inside canvas */}
         <div style={styles.canvas}>
           <SysMLCanvas
             toolbarMode={toolbarMode}
@@ -82,6 +71,16 @@ export default function SysMLModelingView() {
               undoRef.current = undo;
               redoRef.current = redo;
             }}
+          />
+          {/* Floating Toolbar */}
+          <SysMLToolbar
+            onModeChange={handleModeChange}
+            currentMode={toolbarMode}
+            currentData={toolbarData}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
           />
         </div>
       </div>
@@ -158,5 +157,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    position: 'relative',
   },
 };
