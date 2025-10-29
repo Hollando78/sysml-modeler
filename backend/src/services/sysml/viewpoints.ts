@@ -26,7 +26,7 @@ export const structuralDefinitionViewpoint: SysMLViewpoint = {
     'constraint-definition',
     'calculation-definition',
   ],
-  includeEdgeKinds: ['specialization', 'definition', 'dependency', 'flow-connection'],
+  includeEdgeKinds: ['specialization', 'definition', 'dependency', 'flow-connection', 'composition', 'aggregation'],
 };
 
 export const usageStructureViewpoint: SysMLViewpoint = {
@@ -34,7 +34,7 @@ export const usageStructureViewpoint: SysMLViewpoint = {
   name: 'Usage Structure Viewpoint',
   description: 'Shows part, port, action, and item usages mapped back to their definitions.',
   includeNodeKinds: ['part-usage', 'port-usage', 'action-usage', 'item-usage'],
-  includeEdgeKinds: ['definition', 'dependency', 'allocate', 'action-flow', 'flow-connection'],
+  includeEdgeKinds: ['definition', 'dependency', 'allocate', 'action-flow', 'flow-connection', 'composition', 'aggregation'],
 };
 
 export const behaviorControlViewpoint: SysMLViewpoint = {
