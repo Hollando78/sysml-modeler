@@ -133,6 +133,7 @@ export interface SysMLNodeData {
   documentation?: string;
   tags?: SysMLTag[];
   compartments?: SysMLCompartment[];
+  showCompartments?: boolean; // Controls visibility of compartments
   status?: 'draft' | 'reviewed' | 'approved' | 'deprecated';
   emphasis?: string;
   elementKind?: 'definition' | 'usage';

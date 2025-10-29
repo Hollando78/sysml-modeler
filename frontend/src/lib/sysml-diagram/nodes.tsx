@@ -244,8 +244,8 @@ const NodeChrome = ({ data, children }: ChromeProps) => {
   );
 };
 
-const CompartmentList = ({ compartments }: { compartments?: SysMLCompartment[] }) => {
-  if (!compartments || compartments.length === 0) {
+const CompartmentList = ({ compartments, show = true }: { compartments?: SysMLCompartment[]; show?: boolean }) => {
+  if (!show || !compartments || compartments.length === 0) {
     return null;
   }
 
@@ -289,7 +289,7 @@ const RequirementNode = memo((props: NodeProps<SysMLNodeData>) => {
   return (
     <>
       <NodeChrome data={data}>
-        <CompartmentList compartments={data.compartments} />
+        <CompartmentList compartments={data.compartments} show={data.showCompartments} />
       </NodeChrome>
       <HiddenHandles connectable={isConnectable} />
     </>
@@ -301,7 +301,7 @@ const BlockNode = memo((props: NodeProps<SysMLNodeData>) => {
   return (
     <>
       <NodeChrome data={data}>
-        <CompartmentList compartments={data.compartments} />
+        <CompartmentList compartments={data.compartments} show={data.showCompartments} />
       </NodeChrome>
       <HiddenHandles connectable={isConnectable} />
     </>
@@ -316,7 +316,7 @@ const ActivityNode = memo((props: NodeProps<SysMLNodeData>) => {
         {data.emphasis && (
           <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600 }}>{data.emphasis}</div>
         )}
-        <CompartmentList compartments={data.compartments} />
+        <CompartmentList compartments={data.compartments} show={data.showCompartments} />
       </NodeChrome>
       <HiddenHandles connectable={isConnectable} />
     </>
@@ -342,7 +342,7 @@ const ParametricNode = memo((props: NodeProps<SysMLNodeData>) => {
             {data.emphasis}
           </pre>
         )}
-        <CompartmentList compartments={data.compartments} />
+        <CompartmentList compartments={data.compartments} show={data.showCompartments} />
       </NodeChrome>
       <HiddenHandles connectable={isConnectable} />
     </>
@@ -354,7 +354,7 @@ const DefinitionNode = memo((props: NodeProps<SysMLNodeData>) => {
   return (
     <>
       <NodeChrome data={data}>
-        <CompartmentList compartments={data.compartments} />
+        <CompartmentList compartments={data.compartments} show={data.showCompartments} />
       </NodeChrome>
       <HiddenHandles connectable={isConnectable} />
     </>
@@ -411,7 +411,7 @@ const StateNode = memo((props: NodeProps<SysMLNodeData>) => {
             </span>
           ))}
         </div>
-        <CompartmentList compartments={data.compartments} />
+        <CompartmentList compartments={data.compartments} show={data.showCompartments} />
       </NodeChrome>
       <HiddenHandles connectable={isConnectable} />
     </>
@@ -423,7 +423,7 @@ const StateMachineNode = memo((props: NodeProps<SysMLNodeData>) => {
   return (
     <>
       <NodeChrome data={data}>
-        <CompartmentList compartments={data.compartments} />
+        <CompartmentList compartments={data.compartments} show={data.showCompartments} />
       </NodeChrome>
       <HiddenHandles connectable={isConnectable} />
     </>

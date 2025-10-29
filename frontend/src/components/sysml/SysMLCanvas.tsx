@@ -920,7 +920,25 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     }
   }, [activeDiagram, model, diagramMutations]);
 
+  const handleToggleCompartments = useCallback((node: Node<SysMLNodeData>) => {
+    if (!activeDiagram) return;
+
+    const newShowCompartments = node.data.showCompartments === false ? true : false;
+
+    // Update node data in React Flow state
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === node.id
+          ? { ...n, data: { ...n.data, showCompartments: newShowCompartments } }
+          : n
+      )
+    );
+  }, [activeDiagram]);
+
   const getContextMenuItems = useCallback((node: Node<SysMLNodeData>): ContextMenuItem[] => {
+    const hasCompartments = node.data.compartments && node.data.compartments.length > 0;
+    const showCompartments = node.data.showCompartments !== false; // Default to true
+
     return [
       {
         label: 'Cut',
@@ -951,6 +969,12 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       },
       { separator: true, label: '', onClick: () => {} },
       {
+        label: showCompartments ? 'Hide compartments' : 'Show compartments',
+        icon: React.createElement(Network, { size: 14 }),
+        onClick: () => handleToggleCompartments(node),
+        disabled: !hasCompartments,
+      },
+      {
         label: 'Show related elements',
         icon: React.createElement(Network, { size: 14 }),
         onClick: () => handleShowRelatedElements(node),
@@ -962,7 +986,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         onClick: () => handleDelete(node),
       },
     ];
-  }, [clipboard, handleCut, handleCopy, handlePaste, handleRename, handleDelete, handleShowRelatedElements]);
+  }, [clipboard, handleCut, handleCopy, handlePaste, handleRename, handleDelete, handleShowRelatedElements, handleToggleCompartments]);
 
   // Edge Context Menu Handlers
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
