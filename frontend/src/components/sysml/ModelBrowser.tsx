@@ -541,27 +541,23 @@ export default function ModelBrowser() {
                                               </span>
                                             )}
                                             {childIsEditing && editingNode ? (
-                                              <>
-                                                <span style={styles.treePartIcon}>🔹</span>
-                                                <input
-                                                  type="text"
-                                                  style={styles.renameInput}
-                                                  value={editingNode.name}
-                                                  onChange={(e) => setEditingNode({ id: editingNode.id, name: e.target.value })}
-                                                  onBlur={() => handleRenameSubmit(childUsage.spec.id, editingNode.name)}
-                                                  onKeyDown={(e) => {
-                                                    if (e.key === 'Enter') {
-                                                      handleRenameSubmit(childUsage.spec.id, editingNode.name);
-                                                    } else if (e.key === 'Escape') {
-                                                      setEditingNode(null);
-                                                    }
-                                                  }}
-                                                  autoFocus
-                                                />
-                                              </>
+                                              <input
+                                                type="text"
+                                                style={styles.renameInput}
+                                                value={editingNode.name}
+                                                onChange={(e) => setEditingNode({ id: editingNode.id, name: e.target.value })}
+                                                onBlur={() => handleRenameSubmit(childUsage.spec.id, editingNode.name)}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') {
+                                                    handleRenameSubmit(childUsage.spec.id, editingNode.name);
+                                                  } else if (e.key === 'Escape') {
+                                                    setEditingNode(null);
+                                                  }
+                                                }}
+                                                autoFocus
+                                              />
                                             ) : (
                                               <>
-                                                <span style={styles.treePartIcon}>🔹</span>
                                                 <span style={styles.treePartName}>
                                                   {childUsage.spec.name || childUsage.spec.id}
                                                 </span>
@@ -776,23 +772,29 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '4px',
     color: '#555',
     transition: 'background-color 0.15s ease',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
   treeChildItemHover: {
     backgroundColor: '#f5f5f5',
   },
-  treePartIcon: {
-    fontSize: '10px',
-  },
   treePartName: {
     fontWeight: 500,
+    flexShrink: 0,
   },
   treePartType: {
     color: '#666',
     fontStyle: 'italic',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    flexShrink: 1,
   },
   treePartMultiplicity: {
     color: '#888',
     fontSize: '11px',
+    flexShrink: 0,
   },
   renameInput: {
     flex: 1,
