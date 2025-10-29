@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { applyNodeChanges, applyEdgeChanges, ConnectionLineType } from 'reactflow';
+import { Scissors, Copy, Clipboard, Edit, Type, Trash2, Network } from 'lucide-react';
 import { SysMLDiagram, createNodesFromSpecs, createEdgesFromRelationships } from '../../lib/sysml-diagram';
 import type { SysMLNodeSpec as LibSysMLNodeSpec, SysMLRelationshipSpec as LibSysMLRelationshipSpec, SysMLNodeData } from '../../lib/sysml-diagram/types';
 import { useSysMLModel, useSysMLMutations, useDiagramMutations, useSysMLDiagram } from '../../hooks/useSysMLApi';
@@ -9,6 +10,8 @@ import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect } from 'reactf
 import type { ToolbarMode } from './SysMLToolbar';
 import NodeEditor from './NodeEditor';
 import PromptModal from '../common/PromptModal';
+import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu';
+import React from 'react';
 
 interface SysMLCanvasProps {
   toolbarMode: ToolbarMode;
@@ -44,6 +47,8 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       compositionType: 'composition' | 'aggregation';
     };
   } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: Node<SysMLNodeData> } | null>(null);
+  const [clipboard, setClipboard] = useState<{ action: 'cut' | 'copy'; node: Node<SysMLNodeData> } | null>(null);
 
   // Notify parent of undo/redo state changes
   useEffect(() => {
@@ -585,6 +590,206 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     }
   }, [editingNode, elementMutations, addAction]);
 
+  // Context Menu Handlers
+  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node<SysMLNodeData>) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, node });
+  }, []);
+
+  const handleCut = useCallback((node: Node<SysMLNodeData>) => {
+    setClipboard({ action: 'cut', node });
+  }, []);
+
+  const handleCopy = useCallback((node: Node<SysMLNodeData>) => {
+    setClipboard({ action: 'copy', node });
+  }, []);
+
+  const handlePaste = useCallback(async () => {
+    if (!clipboard || !activeDiagram) return;
+
+    const newId = `${clipboard.node.data.kind}-${Date.now()}`;
+    const newNodeSpec = {
+      kind: clipboard.node.data.kind,
+      spec: {
+        ...clipboard.node.data,
+        id: newId,
+        name: `${clipboard.node.data.name || clipboard.node.id} (Copy)`,
+      },
+    } as LibSysMLNodeSpec;
+
+    try {
+      await elementMutations.createElement.mutateAsync(newNodeSpec);
+
+      // Add to current diagram
+      const position = {
+        x: clipboard.node.position.x + 50,
+        y: clipboard.node.position.y + 50,
+      };
+      await diagramMutations.addElementsToDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        elementIds: [newId],
+      });
+      await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        elementId: newId,
+        position,
+      });
+
+      // If it was a cut operation, remove the original from diagram
+      if (clipboard.action === 'cut') {
+        await diagramMutations.removeElementFromDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementId: clipboard.node.id,
+        });
+        setClipboard(null);
+      }
+    } catch (error) {
+      console.error('Paste error:', error);
+    }
+  }, [clipboard, activeDiagram, elementMutations, diagramMutations]);
+
+  const handleRename = useCallback((node: Node<SysMLNodeData>) => {
+    setEditingNode(node);
+  }, []);
+
+  const handleDelete = useCallback(async (node: Node<SysMLNodeData>) => {
+    if (!activeDiagram) return;
+
+    if (window.confirm(`Are you sure you want to delete "${node.data.name || node.id}"?`)) {
+      try {
+        await diagramMutations.removeElementFromDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementId: node.id,
+        });
+
+        // Clear clipboard if deleted node was in it
+        if (clipboard?.node.id === node.id) {
+          setClipboard(null);
+        }
+
+        // Add undo/redo action
+        addAction({
+          type: 'remove-from-diagram',
+          data: { diagramId: activeDiagram.id, elementId: node.id },
+          description: `Remove ${node.data.kind} "${node.data.name}" from diagram`,
+          undo: async () => {
+            await diagramMutations.addElementsToDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementIds: [node.id],
+            });
+          },
+          redo: async () => {
+            await diagramMutations.removeElementFromDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementId: node.id,
+            });
+          },
+        });
+      } catch (error) {
+        console.error('Delete error:', error);
+      }
+    }
+  }, [activeDiagram, clipboard, diagramMutations, addAction]);
+
+  const handleShowRelatedElements = useCallback(async (node: Node<SysMLNodeData>) => {
+    if (!activeDiagram || !model) return;
+
+    // Find all relationships connected to this node
+    const relatedElementIds = new Set<string>();
+
+    model.relationships.forEach((rel) => {
+      if (rel.source === node.id) {
+        relatedElementIds.add(rel.target);
+      } else if (rel.target === node.id) {
+        relatedElementIds.add(rel.source);
+      }
+    });
+
+    // Filter to only elements not already in the diagram
+    const newElementIds = Array.from(relatedElementIds).filter(
+      (id) => !activeDiagram.elementIds.includes(id)
+    );
+
+    if (newElementIds.length === 0) {
+      alert('No hidden related elements found for this node.');
+      return;
+    }
+
+    try {
+      // Add related elements to diagram
+      await diagramMutations.addElementsToDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        elementIds: newElementIds,
+      });
+
+      // Position new elements in a circle around the source node
+      const radius = 200;
+      const angleStep = (2 * Math.PI) / newElementIds.length;
+
+      const positions: Record<string, { x: number; y: number }> = {};
+      newElementIds.forEach((id, index) => {
+        const angle = index * angleStep;
+        positions[id] = {
+          x: node.position.x + radius * Math.cos(angle),
+          y: node.position.y + radius * Math.sin(angle),
+        };
+      });
+
+      await diagramMutations.updateDiagramPositions.mutateAsync({
+        diagramId: activeDiagram.id,
+        positions,
+      });
+
+      console.log(`Added ${newElementIds.length} related elements to diagram`);
+    } catch (error) {
+      console.error('Error showing related elements:', error);
+    }
+  }, [activeDiagram, model, diagramMutations]);
+
+  const getContextMenuItems = useCallback((node: Node<SysMLNodeData>): ContextMenuItem[] => {
+    return [
+      {
+        label: 'Cut',
+        icon: React.createElement(Scissors, { size: 14 }),
+        onClick: () => handleCut(node),
+      },
+      {
+        label: 'Copy',
+        icon: React.createElement(Copy, { size: 14 }),
+        onClick: () => handleCopy(node),
+      },
+      {
+        label: 'Paste',
+        icon: React.createElement(Clipboard, { size: 14 }),
+        onClick: handlePaste,
+        disabled: !clipboard,
+      },
+      { separator: true, label: '', onClick: () => {} },
+      {
+        label: 'Edit',
+        icon: React.createElement(Edit, { size: 14 }),
+        onClick: () => handleRename(node),
+      },
+      {
+        label: 'Rename',
+        icon: React.createElement(Type, { size: 14 }),
+        onClick: () => handleRename(node),
+      },
+      { separator: true, label: '', onClick: () => {} },
+      {
+        label: 'Show related elements',
+        icon: React.createElement(Network, { size: 14 }),
+        onClick: () => handleShowRelatedElements(node),
+      },
+      { separator: true, label: '', onClick: () => {} },
+      {
+        label: 'Delete',
+        icon: React.createElement(Trash2, { size: 14 }),
+        onClick: () => handleDelete(node),
+      },
+    ];
+  }, [clipboard, handleCut, handleCopy, handlePaste, handleRename, handleDelete, handleShowRelatedElements]);
+
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
 
@@ -702,6 +907,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         onConnect={onConnect}
         onPaneClick={onPaneClick}
         onNodeDoubleClick={onNodeDoubleClick}
+        onNodeContextMenu={onNodeContextMenu}
         nodesDraggable={toolbarMode !== 'create-relationship'}
         nodesConnectable={toolbarMode === 'create-relationship'}
         elementsSelectable={true}
@@ -742,6 +948,16 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
           placeholder={promptData.kind === 'composition' ? 'Part name' : 'Element name'}
           onConfirm={handlePromptConfirm}
           onCancel={handlePromptCancel}
+        />
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={getContextMenuItems(contextMenu.node)}
+          onClose={() => setContextMenu(null)}
         />
       )}
     </div>
