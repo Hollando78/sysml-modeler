@@ -19,6 +19,7 @@ export default function ModelBrowser() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: SysMLNodeSpec } | null>(null);
   const [clipboard, setClipboard] = useState<{ action: 'cut' | 'copy'; node: SysMLNodeSpec } | null>(null);
   const [editingNode, setEditingNode] = useState<{ id: string; name: string } | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
   // Group nodes by kind
   const groupedNodes = useMemo(() => {
@@ -331,10 +332,14 @@ export default function ModelBrowser() {
                       <div style={styles.nodeList}>
                         {nodes.map((node) => {
                           const isEditing = editingNode?.id === node.spec.id;
+                          const isHovered = hoveredNode === node.spec.id;
                           return (
                             <div
                               key={node.spec.id}
-                              style={styles.nodeItem}
+                              style={{
+                                ...styles.nodeItem,
+                                ...(isHovered ? styles.nodeItemHover : {}),
+                              }}
                               title={node.spec.description || node.spec.documentation}
                               draggable={!isEditing}
                               onDragStart={(e) => {
@@ -346,6 +351,8 @@ export default function ModelBrowser() {
                                 e.dataTransfer.effectAllowed = 'copy';
                               }}
                               onContextMenu={(e) => handleContextMenu(e, node)}
+                              onMouseEnter={() => setHoveredNode(node.spec.id)}
+                              onMouseLeave={() => setHoveredNode(null)}
                             >
                               {isEditing && editingNode ? (
                                 <input
@@ -410,12 +417,14 @@ export default function ModelBrowser() {
                           const isNodeExpanded = expandedNodes.has(node.spec.id);
                           const hasChildren = children.length > 0;
                           const isEditing = editingNode?.id === node.spec.id;
+                          const isHovered = hoveredNode === node.spec.id;
                           return (
                             <div key={node.spec.id}>
                               <div
                                 style={{
                                   ...styles.treeNodeItem,
-                                  ...(hasChildren ? { fontWeight: 600 } : {})
+                                  ...(hasChildren ? { fontWeight: 600 } : {}),
+                                  ...(isHovered ? styles.treeNodeItemHover : {}),
                                 }}
                                 draggable={!isEditing}
                                 onDragStart={(e) => {
@@ -427,6 +436,8 @@ export default function ModelBrowser() {
                                   e.dataTransfer.effectAllowed = 'copy';
                                 }}
                                 onContextMenu={(e) => handleContextMenu(e, node)}
+                                onMouseEnter={() => setHoveredNode(node.spec.id)}
+                                onMouseLeave={() => setHoveredNode(null)}
                               >
                                 <span style={styles.treeToggle}>
                                   {hasChildren ? (
@@ -473,10 +484,14 @@ export default function ModelBrowser() {
                                 <div style={styles.treeChildren}>
                                   {children.map(({ usage, definition }) => {
                                     const isChildEditing = editingNode?.id === usage.spec.id;
+                                    const isChildHovered = hoveredNode === usage.spec.id;
                                     return (
                                       <div
                                         key={usage.spec.id}
-                                        style={styles.treeChildItem}
+                                        style={{
+                                          ...styles.treeChildItem,
+                                          ...(isChildHovered ? styles.treeChildItemHover : {}),
+                                        }}
                                         draggable={!isChildEditing}
                                         onDragStart={(e) => {
                                           e.dataTransfer.setData('application/sysml-element', JSON.stringify({
@@ -487,6 +502,8 @@ export default function ModelBrowser() {
                                           e.dataTransfer.effectAllowed = 'copy';
                                         }}
                                         onContextMenu={(e) => handleContextMenu(e, usage)}
+                                        onMouseEnter={() => setHoveredNode(usage.spec.id)}
+                                        onMouseLeave={() => setHoveredNode(null)}
                                       >
                                         {isChildEditing && editingNode ? (
                                           <>
@@ -664,6 +681,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
+    transition: 'background-color 0.15s ease',
+  },
+  nodeItemHover: {
+    backgroundColor: '#f5f5f5',
   },
   nodeName: {
     flex: 1,
@@ -683,6 +704,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '4px',
+    transition: 'background-color 0.15s ease',
+  },
+  treeNodeItemHover: {
+    backgroundColor: '#f5f5f5',
   },
   treeToggle: {
     display: 'inline-flex',
@@ -704,6 +729,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '4px',
     color: '#555',
+    transition: 'background-color 0.15s ease',
+  },
+  treeChildItemHover: {
+    backgroundColor: '#f5f5f5',
   },
   treePartIcon: {
     fontSize: '10px',
