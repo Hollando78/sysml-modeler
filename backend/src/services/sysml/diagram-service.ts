@@ -6,6 +6,7 @@ export interface SysMLDiagramSpec {
   viewpointId: string;
   elementIds: string[];
   positions: Record<string, { x: number; y: number }>;
+  hiddenRelationshipIds?: string[]; // Relationships to hide from this diagram
 }
 
 export interface SysMLDiagram extends SysMLDiagramSpec {
@@ -28,6 +29,7 @@ export async function createDiagram(spec: Partial<SysMLDiagramSpec>): Promise<Sy
       viewpointId: spec.viewpointId || '',
       elementIds: JSON.stringify(spec.elementIds || []),
       positions: JSON.stringify(spec.positions || {}),
+      hiddenRelationshipIds: JSON.stringify(spec.hiddenRelationshipIds || []),
       createdAt: now,
       updatedAt: now,
     };
@@ -241,16 +243,82 @@ export async function updateDiagramPositions(
 ): Promise<void> {
   const session = getSession();
   try {
-    const query = `
+    // First, fetch the current positions
+    const fetchQuery = `
+      MATCH (d:Diagram {id: $diagramId})
+      RETURN d.positions as positions
+    `;
+
+    const result = await session.run(fetchQuery, { diagramId });
+    const existingPositions = result.records[0]?.get('positions');
+
+    // Parse existing positions and merge with new ones
+    const currentPositions = existingPositions ? JSON.parse(existingPositions) : {};
+    const mergedPositions = { ...currentPositions, ...positions };
+
+    // Update with merged positions
+    const updateQuery = `
       MATCH (d:Diagram {id: $diagramId})
       SET d.positions = $positions,
           d.updatedAt = $updatedAt
       RETURN d
     `;
 
+    await session.run(updateQuery, {
+      diagramId,
+      positions: JSON.stringify(mergedPositions),
+      updatedAt: new Date().toISOString(),
+    });
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Hide a relationship from a diagram
+ */
+export async function hideRelationshipFromDiagram(diagramId: string, relationshipId: string): Promise<void> {
+  const session = getSession();
+  try {
+    const query = `
+      MATCH (d:Diagram {id: $diagramId})
+      WITH d, COALESCE(d.hiddenRelationshipIds, '[]') as currentHidden
+      WITH d, apoc.convert.fromJsonList(currentHidden) as hiddenList
+      WITH d, hiddenList + [$relationshipId] as newHiddenList
+      SET d.hiddenRelationshipIds = apoc.convert.toJson(newHiddenList),
+          d.updatedAt = $updatedAt
+      RETURN d
+    `;
+
     await session.run(query, {
       diagramId,
-      positions: JSON.stringify(positions),
+      relationshipId,
+      updatedAt: new Date().toISOString(),
+    });
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Show a hidden relationship in a diagram
+ */
+export async function showRelationshipInDiagram(diagramId: string, relationshipId: string): Promise<void> {
+  const session = getSession();
+  try {
+    const query = `
+      MATCH (d:Diagram {id: $diagramId})
+      WITH d, COALESCE(d.hiddenRelationshipIds, '[]') as currentHidden
+      WITH d, apoc.convert.fromJsonList(currentHidden) as hiddenList
+      WITH d, [item IN hiddenList WHERE item <> $relationshipId] as newHiddenList
+      SET d.hiddenRelationshipIds = apoc.convert.toJson(newHiddenList),
+          d.updatedAt = $updatedAt
+      RETURN d
+    `;
+
+    await session.run(query, {
+      diagramId,
+      relationshipId,
       updatedAt: new Date().toISOString(),
     });
   } finally {
@@ -268,6 +336,7 @@ function neo4jToDiagram(properties: Record<string, any>): SysMLDiagram {
     viewpointId: properties.viewpointId,
     elementIds: JSON.parse(properties.elementIds || '[]'),
     positions: JSON.parse(properties.positions || '{}'),
+    hiddenRelationshipIds: JSON.parse(properties.hiddenRelationshipIds || '[]'),
     createdAt: properties.createdAt,
     updatedAt: properties.updatedAt,
   };

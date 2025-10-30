@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
-import { ChevronRight, ChevronDown, Search, List, Network, Scissors, Copy, Clipboard, Edit, Type, Trash2 } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { ChevronRight, ChevronDown, Search, List, Network, Scissors, Copy, Clipboard, Edit, Type, Trash2, LogIn, Zap, LogOut } from 'lucide-react';
 import { useSysMLModel, useSysMLMutations } from '../../hooks/useSysMLApi';
 import { useDiagram } from '../../lib/DiagramContext';
 import { getNodeIcon } from '../../lib/sysml-diagram/icon-mappings';
 import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu';
+import ConfirmModal from '../common/ConfirmModal';
 import type { SysMLNodeSpec } from '../../types';
 
 type ViewMode = 'kind' | 'tree';
@@ -20,6 +21,99 @@ export default function ModelBrowser() {
   const [clipboard, setClipboard] = useState<{ action: 'cut' | 'copy'; node: SysMLNodeSpec } | null>(null);
   const [editingNode, setEditingNode] = useState<{ id: string; name: string } | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ node: SysMLNodeSpec } | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Close context menu when clicking anywhere outside (including on canvas)
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const handleClickAnywhere = (e: MouseEvent) => {
+      // Check if the click is inside the context menu itself
+      const target = e.target as HTMLElement;
+      const isContextMenuClick = target.closest('[data-context-menu]');
+
+      if (!isContextMenuClick) {
+        setContextMenu(null);
+      }
+    };
+
+    // Add listener with a small delay to prevent immediate closing
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickAnywhere, true);
+    }, 10);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('mousedown', handleClickAnywhere, true);
+    };
+  }, [contextMenu]);
+
+  // Build a map of action definitions to state machines that reference them
+  const actionToStateMachinesMap = useMemo(() => {
+    if (!model) return new Map<string, string[]>();
+
+    const map = new Map<string, string[]>();
+
+    // Helper to collect action IDs from a state
+    const collectActionIds = (state: SysMLNodeSpec): string[] => {
+      const actionIds: string[] = [];
+      const actions = [
+        state.spec.entryAction,
+        state.spec.doActivity,
+        state.spec.exitAction,
+        (state as any).entryAction,
+        (state as any).doActivity,
+        (state as any).exitAction,
+      ];
+
+      actions.forEach((action) => {
+        if (action && typeof action === 'object' && action.actionId) {
+          actionIds.push(action.actionId);
+        }
+      });
+
+      return actionIds;
+    };
+
+    // Find all state machines
+    const stateMachines = model.nodes.filter(n => n.kind === 'state-machine');
+
+    stateMachines.forEach(sm => {
+      // Find all states in this state machine via composition relationships
+      const stateIds = new Set<string>();
+      const findStates = (ownerId: string, visited = new Set<string>()) => {
+        if (visited.has(ownerId)) return;
+        visited.add(ownerId);
+
+        model.relationships
+          .filter(rel => rel.source === ownerId && (rel.type === 'composition' || rel.type === 'aggregation'))
+          .forEach(rel => {
+            const child = model.nodes.find(n => n.spec.id === rel.target);
+            if (child && (child.kind === 'state-usage' || child.kind === 'state-definition')) {
+              stateIds.add(child.spec.id);
+              // Check for action references in this state
+              const actionIds = collectActionIds(child);
+              actionIds.forEach(actionId => {
+                if (!map.has(actionId)) {
+                  map.set(actionId, []);
+                }
+                const machines = map.get(actionId)!;
+                if (!machines.includes(sm.spec.name || sm.spec.id)) {
+                  machines.push(sm.spec.name || sm.spec.id);
+                }
+              });
+              // Recursively check children
+              findStates(child.spec.id, visited);
+            }
+          });
+      };
+
+      findStates(sm.spec.id);
+    });
+
+    return map;
+  }, [model]);
 
   // Group nodes by kind
   const groupedNodes = useMemo(() => {
@@ -54,19 +148,20 @@ export default function ModelBrowser() {
   const treeStructure = useMemo(() => {
     if (!model) return {};
 
-    // Build a map of owned parts for each owner (can be definition or part-usage)
+    // Build a map of owned parts/states for each owner (can be definition, part-usage, or state-machine)
     const ownershipMap: Record<string, Array<{ usage: SysMLNodeSpec; definition: SysMLNodeSpec }>> = {};
 
     // Find all composition/aggregation relationships
     model.relationships.forEach((rel) => {
       if (rel.type === 'composition' || rel.type === 'aggregation') {
-        // rel.source is the owner (definition or part-usage), rel.target is the owned part-usage
-        const partUsage = model.nodes.find((n) => n.spec.id === rel.target);
-        if (!partUsage) return;
+        // rel.source is the owner (definition, part-usage, or state-machine)
+        // rel.target is the owned part-usage or state-usage
+        const usageNode = model.nodes.find((n) => n.spec.id === rel.target);
+        if (!usageNode) return;
 
-        // Find the definition relationship from part-usage to its definition
+        // Find the definition relationship from usage to its definition
         const defRel = model.relationships.find(
-          (r) => r.type === 'definition' && r.source === partUsage.spec.id
+          (r) => r.type === 'definition' && r.source === usageNode.spec.id
         );
         if (!defRel) return;
 
@@ -76,32 +171,116 @@ export default function ModelBrowser() {
         if (!ownershipMap[rel.source]) {
           ownershipMap[rel.source] = [];
         }
-        ownershipMap[rel.source].push({ usage: partUsage, definition });
+        ownershipMap[rel.source].push({ usage: usageNode, definition });
       }
     });
 
-    // Recursive function to get children for any node (definition or part-usage)
-    const getChildren = (nodeId: string): Array<{ usage: SysMLNodeSpec; definition: SysMLNodeSpec; children: any[] }> => {
+    // Recursive function to get children for any node (definition, part-usage, or state-machine)
+    const getChildren = (nodeId: string): Array<{ usage: SysMLNodeSpec; definition: SysMLNodeSpec; children: any[]; actions?: any[] }> => {
       const directChildren = ownershipMap[nodeId] || [];
-      return directChildren.map(({ usage, definition }) => ({
-        usage,
-        definition,
-        children: getChildren(usage.spec.id) // Recursively get children of the part-usage
-      }));
+      return directChildren.map(({ usage, definition }) => {
+        // Extract actions if this is a state-usage or state-definition
+        let actions: any[] | undefined;
+        if (usage.kind === 'state-usage' || usage.kind === 'state-definition') {
+          actions = [];
+          if (usage.spec.entryAction) {
+            actions.push({ type: 'entry', value: usage.spec.entryAction });
+          }
+          if (usage.spec.doActivity) {
+            actions.push({ type: 'do', value: usage.spec.doActivity });
+          }
+          if (usage.spec.exitAction) {
+            actions.push({ type: 'exit', value: usage.spec.exitAction });
+          }
+        }
+
+        return {
+          usage,
+          definition,
+          children: getChildren(usage.spec.id), // Recursively get children of the usage
+          actions
+        };
+      });
+    };
+
+    // Collect all action IDs referenced by states in a state machine
+    const getReferencedActionIds = (nodeId: string, visited = new Set<string>()): Set<string> => {
+      if (visited.has(nodeId)) return new Set();
+      visited.add(nodeId);
+
+      const actionIds = new Set<string>();
+      const children = ownershipMap[nodeId] || [];
+
+      children.forEach(({ usage }) => {
+        // Check if this is a state with action references
+        if (usage.kind === 'state-usage' || usage.kind === 'state-definition') {
+          // Check both spec and root level for actions (they might be in either location)
+          const actions = [
+            usage.spec.entryAction,
+            usage.spec.doActivity,
+            usage.spec.exitAction,
+            (usage as any).entryAction,
+            (usage as any).doActivity,
+            (usage as any).exitAction,
+          ];
+
+          actions.forEach((action) => {
+            if (action && typeof action === 'object' && action.actionId) {
+              actionIds.add(action.actionId);
+            }
+          });
+        }
+
+        // Recursively check children
+        const childActionIds = getReferencedActionIds(usage.spec.id, visited);
+        childActionIds.forEach(id => actionIds.add(id));
+      });
+
+      return actionIds;
     };
 
     // Group definitions by kind
-    const tree: Record<string, Array<{ node: SysMLNodeSpec; children: any[] }>> = {};
+    const tree: Record<string, Array<{ node: SysMLNodeSpec; children: any[]; actions?: any[]; actionDefinitions?: SysMLNodeSpec[] }>> = {};
 
     model.nodes.forEach((node) => {
-      // Only show definition types at the root level
-      if (node.kind.endsWith('-definition')) {
+      // Show definition types and state-machines at the root level
+      if (node.kind.endsWith('-definition') || node.kind === 'state-machine') {
         if (!tree[node.kind]) {
           tree[node.kind] = [];
         }
+
+        // Extract actions if this is a state-definition
+        let actions: any[] | undefined;
+        if (node.kind === 'state-definition') {
+          actions = [];
+          if (node.spec.entryAction) {
+            actions.push({ type: 'entry', value: node.spec.entryAction });
+          }
+          if (node.spec.doActivity) {
+            actions.push({ type: 'do', value: node.spec.doActivity });
+          }
+          if (node.spec.exitAction) {
+            actions.push({ type: 'exit', value: node.spec.exitAction });
+          }
+        }
+
+        // For state machines, collect referenced action definitions
+        let actionDefinitions: SysMLNodeSpec[] | undefined;
+        if (node.kind === 'state-machine') {
+          const referencedIds = getReferencedActionIds(node.spec.id);
+          if (referencedIds.size > 0) {
+            actionDefinitions = model.nodes.filter(n =>
+              (n.kind === 'action-definition' || n.kind === 'action-usage') &&
+              referencedIds.has(n.spec.id)
+            );
+          }
+        }
+
         tree[node.kind].push({
           node,
-          children: getChildren(node.spec.id)
+          children: getChildren(node.spec.id),
+          actions,
+          actionDefinitions
         });
       }
     });
@@ -139,7 +318,12 @@ export default function ModelBrowser() {
   const handleContextMenu = (e: React.MouseEvent, node: SysMLNodeSpec) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, node });
+    // Close any existing context menu first
+    setContextMenu(null);
+    // Use setTimeout to allow the click event to finish propagating before opening
+    setTimeout(() => {
+      setContextMenu({ x: e.clientX, y: e.clientY, node });
+    }, 0);
   };
 
   const handleCut = (node: SysMLNodeSpec) => {
@@ -197,17 +381,26 @@ export default function ModelBrowser() {
     }
   };
 
-  const handleDelete = async (node: SysMLNodeSpec) => {
-    if (window.confirm(`Are you sure you want to delete "${node.spec.name || node.spec.id}"?`)) {
-      try {
-        await mutations.deleteElement.mutateAsync(node.spec.id);
-        // Clear clipboard if deleted node was in it
-        if (clipboard?.node.spec.id === node.spec.id) {
-          setClipboard(null);
-        }
-      } catch (error) {
-        console.error('Delete error:', error);
+  const handleDelete = (node: SysMLNodeSpec) => {
+    setDeleteConfirm({ node });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+
+    const node = deleteConfirm.node;
+    setDeleteConfirm(null);
+
+    try {
+      await mutations.deleteElement.mutateAsync(node.spec.id);
+      // Clear clipboard if deleted node was in it
+      if (clipboard?.node.spec.id === node.spec.id) {
+        setClipboard(null);
       }
+    } catch (error) {
+      console.error('Delete error:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      setErrorMessage(`Failed to delete element: ${errorMsg}\n\nPlease check your network connection and try again.`);
     }
   };
 
@@ -386,6 +579,13 @@ export default function ModelBrowser() {
                                   {node.spec.status && (
                                     <span style={styles.nodeStatus}>{node.spec.status}</span>
                                   )}
+                                  {/* Show state machine references for action definitions */}
+                                  {(node.kind === 'action-definition' || node.kind === 'action-usage') &&
+                                   actionToStateMachinesMap.has(node.spec.id) && (
+                                    <span style={styles.actionStateMachineRef}>
+                                      ← {actionToStateMachinesMap.get(node.spec.id)!.join(', ')}
+                                    </span>
+                                  )}
                                 </>
                               )}
                             </div>
@@ -423,9 +623,12 @@ export default function ModelBrowser() {
 
                     {isKindExpanded && (
                       <div style={styles.nodeList}>
-                        {items.map(({ node, children }) => {
+                        {items.map(({ node, children, actions, actionDefinitions }) => {
                           const isNodeExpanded = expandedNodes.has(node.spec.id);
                           const hasChildren = children.length > 0;
+                          const hasActions = actions && actions.length > 0;
+                          const hasActionDefinitions = actionDefinitions && actionDefinitions.length > 0;
+                          const hasExpandable = hasChildren || hasActions || hasActionDefinitions;
                           const isEditing = editingNode?.id === node.spec.id;
                           const isHovered = hoveredNode === node.spec.id;
                           return (
@@ -450,7 +653,7 @@ export default function ModelBrowser() {
                                 onMouseLeave={() => setHoveredNode(null)}
                               >
                                 <span style={styles.treeToggle}>
-                                  {hasChildren ? (
+                                  {hasExpandable ? (
                                     <span
                                       onClick={(e) => {
                                         e.stopPropagation();
@@ -489,17 +692,105 @@ export default function ModelBrowser() {
                                 )}
                               </div>
 
-                              {/* Owned parts (children) - recursively rendered */}
-                              {isNodeExpanded && hasChildren && (
+                              {/* Actions, action definitions, and children when expanded */}
+                              {isNodeExpanded && (hasActions || hasActionDefinitions || hasChildren) && (
+                                <>
+                                  {/* Render root-level node actions if this is a state-definition */}
+                                  {hasActions && (
+                                    <div style={styles.treeChildren}>
+                                      {actions.map((action: any, idx: number) => {
+                                        const isRef = typeof action.value === 'object' && action.value.actionName;
+                                        const displayValue = isRef ? action.value.actionName : action.value;
+                                        const ActionIcon = action.type === 'entry' ? LogIn : action.type === 'do' ? Zap : LogOut;
+
+                                        return (
+                                          <div
+                                            key={`${node.spec.id}-action-${idx}`}
+                                            style={styles.treeActionItem}
+                                            title={isRef ? `References action: ${displayValue}` : `Text action: ${displayValue}`}
+                                          >
+                                            <ActionIcon size={14} style={styles.actionIcon} />
+                                            <span style={styles.actionType}>{action.type}:</span>
+                                            {isRef && <span style={styles.actionReference}>→</span>}
+                                            <span style={isRef ? styles.actionNameRef : styles.actionNameText}>
+                                              {displayValue}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+
+                                  {/* Render action definitions referenced by this state machine */}
+                                  {hasActionDefinitions && (
+                                    <div style={styles.treeChildren}>
+                                      {actionDefinitions.map((actionNode) => {
+                                        const actionIsEditing = editingNode?.id === actionNode.spec.id;
+                                        const actionIsHovered = hoveredNode === actionNode.spec.id;
+                                        const ActionNodeIcon = getNodeIcon(actionNode.kind);
+
+                                        return (
+                                          <div
+                                            key={actionNode.spec.id}
+                                            style={{
+                                              ...styles.treeActionDefinitionItem,
+                                              ...(actionIsHovered ? styles.treeActionDefinitionItemHover : {}),
+                                            }}
+                                            draggable={!actionIsEditing}
+                                            onDragStart={(e) => {
+                                              e.dataTransfer.setData('application/sysml-element', JSON.stringify({
+                                                id: actionNode.spec.id,
+                                                kind: actionNode.kind,
+                                                name: actionNode.spec.name || actionNode.spec.id
+                                              }));
+                                              e.dataTransfer.effectAllowed = 'copy';
+                                            }}
+                                            onContextMenu={(e) => handleContextMenu(e, actionNode)}
+                                            onMouseEnter={() => setHoveredNode(actionNode.spec.id)}
+                                            onMouseLeave={() => setHoveredNode(null)}
+                                          >
+                                            <ActionNodeIcon size={14} style={styles.actionDefinitionIcon} />
+                                            {actionIsEditing && editingNode ? (
+                                              <input
+                                                type="text"
+                                                style={styles.renameInput}
+                                                value={editingNode.name}
+                                                onChange={(e) => setEditingNode({ id: editingNode.id, name: e.target.value })}
+                                                onBlur={() => handleRenameSubmit(actionNode.spec.id, editingNode.name)}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') {
+                                                    handleRenameSubmit(actionNode.spec.id, editingNode.name);
+                                                  } else if (e.key === 'Escape') {
+                                                    setEditingNode(null);
+                                                  }
+                                                }}
+                                                autoFocus
+                                              />
+                                            ) : (
+                                              <span style={styles.actionDefinitionName}>
+                                                {actionNode.spec.name || actionNode.spec.id}
+                                              </span>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+
+                                  {/* Owned parts/states (children) - recursively rendered */}
+                                  {hasChildren && (
                                 <div style={styles.treeChildren}>
-                                  {children.map(({ usage, definition, children: nestedChildren }) => {
+                                  {children.map(({ usage, definition, children: nestedChildren, actions }) => {
                                     const renderPartUsage = (
                                       childUsage: typeof usage,
                                       childDef: typeof definition,
                                       childNested: typeof nestedChildren,
+                                      childActions: typeof actions,
                                       depth: number = 0
                                     ): React.ReactNode => {
                                       const childHasNested = childNested && childNested.length > 0;
+                                      const childHasActions = childActions && childActions.length > 0;
+                                      const childHasExpandable = childHasNested || childHasActions;
                                       const childIsExpanded = expandedNodes.has(childUsage.spec.id);
                                       const childIsEditing = editingNode?.id === childUsage.spec.id;
                                       const childIsHovered = hoveredNode === childUsage.spec.id;
@@ -525,7 +816,7 @@ export default function ModelBrowser() {
                                             onMouseEnter={() => setHoveredNode(childUsage.spec.id)}
                                             onMouseLeave={() => setHoveredNode(null)}
                                           >
-                                            {childHasNested && (
+                                            {childHasExpandable ? (
                                               <span
                                                 onClick={(e) => {
                                                   e.stopPropagation();
@@ -539,6 +830,8 @@ export default function ModelBrowser() {
                                                   <ChevronRight size={12} />
                                                 )}
                                               </span>
+                                            ) : (
+                                              <span style={{ width: '12px', display: 'inline-block', marginRight: '4px' }} />
                                             )}
                                             {childIsEditing && editingNode ? (
                                               <input
@@ -572,20 +865,58 @@ export default function ModelBrowser() {
                                               </>
                                             )}
                                           </div>
-                                          {childIsExpanded && childHasNested && (
-                                            <div style={styles.treeChildren}>
-                                              {childNested.map((nested: any) =>
-                                                renderPartUsage(nested.usage, nested.definition, nested.children, depth + 1)
+
+                                          {/* Render actions and nested children when expanded */}
+                                          {childIsExpanded && (childHasActions || childHasNested) && (
+                                            <>
+                                              {/* Render actions if this is a state */}
+                                              {childHasActions && (
+                                                <div style={styles.treeChildren}>
+                                                  {childActions.map((action: any, idx: number) => {
+                                                    const isRef = typeof action.value === 'object' && action.value.actionName;
+                                                    const displayValue = isRef ? action.value.actionName : action.value;
+                                                    const ActionIcon = action.type === 'entry' ? LogIn : action.type === 'do' ? Zap : LogOut;
+
+                                                    return (
+                                                      <div
+                                                        key={`${childUsage.spec.id}-action-${idx}`}
+                                                        style={{
+                                                          ...styles.treeActionItem,
+                                                          paddingLeft: `${(depth + 1) * 16}px`,
+                                                        }}
+                                                        title={isRef ? `References action: ${displayValue}` : `Text action: ${displayValue}`}
+                                                      >
+                                                        <ActionIcon size={14} style={styles.actionIcon} />
+                                                        <span style={styles.actionType}>{action.type}:</span>
+                                                        {isRef && <span style={styles.actionReference}>→</span>}
+                                                        <span style={isRef ? styles.actionNameRef : styles.actionNameText}>
+                                                          {displayValue}
+                                                        </span>
+                                                      </div>
+                                                    );
+                                                  })}
+                                                </div>
                                               )}
-                                            </div>
+
+                                              {/* Render nested children (recursive) */}
+                                              {childHasNested && (
+                                                <div style={styles.treeChildren}>
+                                                  {childNested.map((nested: any) =>
+                                                    renderPartUsage(nested.usage, nested.definition, nested.children, nested.actions, depth + 1)
+                                                  )}
+                                                </div>
+                                              )}
+                                            </>
                                           )}
                                         </div>
                                       );
                                     };
 
-                                    return renderPartUsage(usage, definition, nestedChildren, 0);
+                                    return renderPartUsage(usage, definition, nestedChildren, actions, 0);
                                   })}
                                 </div>
+                                  )}
+                                </>
                               )}
                             </div>
                           );
@@ -606,6 +937,32 @@ export default function ModelBrowser() {
           y={contextMenu.y}
           items={getContextMenuItems(contextMenu.node)}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <ConfirmModal
+          title="Delete Element"
+          message={`Are you sure you want to delete "${deleteConfirm.node.spec.name || deleteConfirm.node.spec.id}"? This action cannot be undone.`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          variant="danger"
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
+
+      {/* Error Modal */}
+      {errorMessage && (
+        <ConfirmModal
+          title="Error"
+          message={errorMessage}
+          confirmLabel="OK"
+          cancelLabel="Close"
+          variant="warning"
+          onConfirm={() => setErrorMessage(null)}
+          onCancel={() => setErrorMessage(null)}
         />
       )}
     </div>
@@ -638,7 +995,9 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     padding: '6px 8px',
     fontSize: '12px',
-    border: '1px solid #ddd',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#ddd',
     borderRadius: '4px',
     backgroundColor: 'white',
     cursor: 'pointer',
@@ -672,7 +1031,9 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     padding: '6px 8px 6px 28px',
     fontSize: '13px',
-    border: '1px solid #ccc',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#ccc',
     borderRadius: '4px',
   },
   content: {
@@ -738,6 +1099,12 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: '#e0e0e0',
     color: '#666',
   },
+  actionStateMachineRef: {
+    fontSize: '11px',
+    color: '#007bff',
+    fontStyle: 'italic',
+    marginLeft: '8px',
+  },
   treeNodeItem: {
     padding: '6px 8px',
     fontSize: '13px',
@@ -800,8 +1167,68 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     padding: '2px 4px',
     fontSize: '13px',
-    border: '1px solid #007bff',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#007bff',
     borderRadius: '2px',
     outline: 'none',
+  },
+  treeActionItem: {
+    padding: '6px 8px',
+    fontSize: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    color: '#666',
+    backgroundColor: '#fafafa',
+    borderLeft: '2px solid #e0e0e0',
+    marginLeft: '8px',
+  },
+  actionIcon: {
+    flexShrink: 0,
+    color: '#666',
+  },
+  actionType: {
+    fontWeight: 500,
+    color: '#555',
+    flexShrink: 0,
+  },
+  actionReference: {
+    color: '#007bff',
+    fontWeight: 600,
+    flexShrink: 0,
+  },
+  actionNameRef: {
+    color: '#007bff',
+    fontWeight: 500,
+  },
+  actionNameText: {
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  treeActionDefinitionItem: {
+    padding: '6px 8px',
+    fontSize: '12px',
+    cursor: 'pointer',
+    borderRadius: '3px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    color: '#333',
+    backgroundColor: '#f0f8ff',
+    borderLeft: '2px solid #007bff',
+    marginLeft: '8px',
+    transition: 'background-color 0.15s ease',
+  },
+  treeActionDefinitionItemHover: {
+    backgroundColor: '#e6f2ff',
+  },
+  actionDefinitionIcon: {
+    flexShrink: 0,
+    color: '#007bff',
+  },
+  actionDefinitionName: {
+    fontWeight: 500,
+    color: '#333',
   },
 };

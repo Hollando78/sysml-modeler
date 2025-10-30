@@ -10,6 +10,46 @@ import {
 } from './mapper.js';
 import { getViewpointById } from './viewpoints.js';
 
+/**
+ * Transform parameters into compartments for display
+ */
+function parametersToCompartments(parameters?: any[]): any[] | undefined {
+  if (!parameters || parameters.length === 0) {
+    return undefined;
+  }
+
+  const inputs = parameters.filter(p => p.direction === 'in' || p.direction === 'inout');
+  const outputs = parameters.filter(p => p.direction === 'out' || p.direction === 'inout');
+
+  const compartments: any[] = [];
+
+  if (inputs.length > 0) {
+    compartments.push({
+      title: 'inputs',
+      items: inputs.map(p => ({
+        label: p.name,
+        value: p.type || '',
+        emphasis: p.inherited ? false : undefined, // De-emphasize inherited params
+        inherited: p.inherited || false, // Track if parameter is inherited
+      })),
+    });
+  }
+
+  if (outputs.length > 0) {
+    compartments.push({
+      title: 'outputs',
+      items: outputs.map(p => ({
+        label: p.name,
+        value: p.type || '',
+        emphasis: p.inherited ? false : undefined,
+        inherited: p.inherited || false,
+      })),
+    });
+  }
+
+  return compartments.length > 0 ? compartments : undefined;
+}
+
 export interface SysMLNodeSpec {
   kind: string;
   spec: any;
@@ -52,7 +92,7 @@ export async function fetchModel(viewpointId?: string): Promise<SysMLModel> {
     }
 
     const query = `
-      // Fetch nodes with their owned parts
+      // Fetch nodes with their owned parts and definition (for parameter inheritance)
       MATCH (n:SysMLElement)
       ${nodeLabelFilter}
       OPTIONAL MATCH (n)-[compRel:COMPOSITION|AGGREGATION]->(partUsage:PartUsage)-[defRel:DEFINITION]->(partDef:SysMLElement)
@@ -64,10 +104,26 @@ export async function fetchModel(viewpointId?: string): Promise<SysMLModel> {
         multiplicity: partUsage.multiplicity,
         relationshipType: type(compRel)
       }) as ownedParts
+      // For state machines, fetch their owned states
+      OPTIONAL MATCH (n)-[stateCompRel:COMPOSITION|AGGREGATION]->(stateUsage:StateUsage)-[stateDefRel:DEFINITION]->(stateDef:SysMLElement)
+      WHERE 'StateMachine' IN labels(n)
+      WITH n, ownedParts, collect({
+        id: stateUsage.id,
+        name: stateUsage.name,
+        definitionId: stateDef.id,
+        definitionName: stateDef.name,
+        relationshipType: type(stateCompRel)
+      }) as ownedStates
+      // For action/calculation usages, fetch their definition's parameters
+      OPTIONAL MATCH (n)-[:DEFINITION]->(def:SysMLElement)
+      WHERE 'ActionUsage' IN labels(n) OR 'CalculationUsage' IN labels(n)
+      WITH n, ownedParts, ownedStates, def
       WITH collect({
         labels: labels(n),
         properties: properties(n),
-        ownedParts: CASE WHEN size(ownedParts) > 0 AND ownedParts[0].id IS NOT NULL THEN ownedParts ELSE [] END
+        ownedParts: CASE WHEN size(ownedParts) > 0 AND ownedParts[0].id IS NOT NULL THEN ownedParts ELSE [] END,
+        ownedStates: CASE WHEN size(ownedStates) > 0 AND ownedStates[0].id IS NOT NULL THEN ownedStates ELSE [] END,
+        definitionParameters: CASE WHEN def IS NOT NULL THEN def.parameters ELSE NULL END
       }) as nodes
 
       // Fetch relationships
@@ -92,11 +148,14 @@ export async function fetchModel(viewpointId?: string): Promise<SysMLModel> {
 
     // Parse nodes
     const nodesData = record.get('nodes') as any[];
+    console.log('[DEBUG] fetchModel: Processing', nodesData.length, 'nodes');
     const nodes: SysMLNodeSpec[] = nodesData.map((node) => {
       // Get the specific label (not SysMLElement)
       const specificLabel = node.labels.find((l: string) => l !== 'SysMLElement');
       const kind = labelToNodeKind(specificLabel);
       const spec = neo4jPropertiesToSpec(node.properties);
+
+      console.log('[DEBUG] Processing node:', { kind, id: spec.id, hasParameters: !!spec.parameters, hasDefinitionParameters: !!node.definitionParameters });
 
       // Add owned parts if present
       if (node.ownedParts && node.ownedParts.length > 0) {
@@ -108,6 +167,53 @@ export async function fetchModel(viewpointId?: string): Promise<SysMLModel> {
           multiplicity: part.multiplicity,
           relationshipType: part.relationshipType,
         }));
+      }
+
+      // Add owned states if present (for state machines)
+      if (node.ownedStates && node.ownedStates.length > 0) {
+        spec.states = node.ownedStates.map((state: any) => ({
+          id: state.id,
+          name: state.name,
+          definitionId: state.definitionId,
+          definitionName: state.definitionName,
+          relationshipType: state.relationshipType,
+        }));
+      }
+
+      // Merge inherited parameters from definition (for usages)
+      if ((kind === 'action-usage' || kind === 'calculation-usage') && node.definitionParameters) {
+        try {
+          const inheritedParams = JSON.parse(node.definitionParameters);
+          const localParams = spec.parameters || [];
+
+          console.log('[DEBUG] Inheriting parameters for', kind, ':', {
+            inherited: inheritedParams,
+            local: localParams
+          });
+
+          // Mark inherited parameters
+          const inheritedWithFlag = inheritedParams.map((p: any) => ({ ...p, inherited: true }));
+
+          // Merge: local parameters override inherited ones with same name
+          const localNames = new Set(localParams.map((p: any) => p.name));
+          const mergedParams = [
+            ...inheritedWithFlag.filter((p: any) => !localNames.has(p.name)),
+            ...localParams.map((p: any) => ({ ...p, inherited: false }))
+          ];
+
+          spec.parameters = mergedParams;
+          console.log('[DEBUG] Merged parameters:', mergedParams);
+        } catch (e) {
+          console.warn('[DEBUG] Failed to parse definition parameters:', e);
+        }
+      }
+
+      // Transform parameters into compartments for action definitions/usages
+      if ((kind === 'action-definition' || kind === 'action-usage' || kind === 'calculation-usage') && spec.parameters) {
+        console.log('[DEBUG] Found parameters for', kind, ':', spec.parameters);
+        const compartments = parametersToCompartments(spec.parameters);
+        console.log('[DEBUG] Generated compartments for', kind, ':', compartments);
+        spec.compartments = compartments;
       }
 
       return { kind, spec };
@@ -167,7 +273,9 @@ export async function createElement(nodeSpec: SysMLNodeSpec): Promise<void> {
 export async function updateElement(id: string, updates: Partial<any>): Promise<void> {
   const session = getSession();
   try {
+    console.log('[DEBUG] updateElement called with:', { id, updates });
     const properties = specToNeo4jProperties(updates);
+    console.log('[DEBUG] Converted to Neo4j properties:', properties);
     properties.updatedAt = new Date().toISOString();
 
     // Remove id from updates (shouldn't be updated)
@@ -184,6 +292,7 @@ export async function updateElement(id: string, updates: Partial<any>): Promise<
     if (result.records.length === 0) {
       throw new Error(`Element with id ${id} not found`);
     }
+    console.log('[DEBUG] Element updated successfully');
   } finally {
     await session.close();
   }
@@ -376,6 +485,98 @@ export async function deleteComposition(partUsageId: string): Promise<void> {
     `;
 
     await session.run(query, { partUsageId });
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Create a SysML v2.0 compliant state-in-statemachine relationship
+ * This creates an intermediate state-usage that references the target state definition
+ */
+export async function createStateInStateMachine(
+  stateMachineId: string,
+  stateDefinitionId: string,
+  stateName: string
+): Promise<{ stateUsageId: string; definitionRelId: string; compositionRelId: string }> {
+  const session = getSession();
+  try {
+    // Generate IDs
+    const stateUsageId = `${stateMachineId}-state-${Date.now()}`;
+    const definitionRelId = `${stateUsageId}-definition-${stateDefinitionId}`;
+    const compositionRelId = `${stateMachineId}-composition-${stateUsageId}`;
+
+    const now = new Date().toISOString();
+
+    // Create state-usage, definition relationship, and composition relationship in one transaction
+    const query = `
+      // Verify state machine and state definition exist
+      MATCH (stateMachine:SysMLElement {id: $stateMachineId})
+      MATCH (stateDef:SysMLElement {id: $stateDefinitionId})
+
+      // Create the state-usage node
+      CREATE (stateUsage:SysMLElement:StateUsage {
+        id: $stateUsageId,
+        name: $stateName,
+        createdAt: $now,
+        updatedAt: $now
+      })
+
+      // Create DEFINITION relationship: state-usage -> state definition
+      CREATE (stateUsage)-[defRel:DEFINITION {
+        id: $definitionRelId,
+        createdAt: $now,
+        updatedAt: $now
+      }]->(stateDef)
+
+      // Create COMPOSITION relationship: state machine -> state-usage
+      CREATE (stateMachine)-[compRel:COMPOSITION {
+        id: $compositionRelId,
+        createdAt: $now,
+        updatedAt: $now
+      }]->(stateUsage)
+
+      RETURN stateUsage, defRel, compRel
+    `;
+
+    const result = await session.run(query, {
+      stateMachineId,
+      stateDefinitionId,
+      stateUsageId,
+      stateName,
+      definitionRelId,
+      compositionRelId,
+      now,
+    });
+
+    if (result.records.length === 0) {
+      throw new Error('Failed to create state in state machine. State machine or state definition not found.');
+    }
+
+    return {
+      stateUsageId,
+      definitionRelId,
+      compositionRelId,
+    };
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Delete a state from a state machine and its intermediate state-usage
+ * This reverses the createStateInStateMachine operation
+ */
+export async function deleteStateFromStateMachine(stateUsageId: string): Promise<void> {
+  const session = getSession();
+  try {
+    // Delete the state-usage node and all its relationships
+    const query = `
+      MATCH (stateUsage:SysMLElement:StateUsage {id: $stateUsageId})
+      DETACH DELETE stateUsage
+    `;
+
+    await session.run(query, { stateUsageId });
   } finally {
     await session.close();
   }

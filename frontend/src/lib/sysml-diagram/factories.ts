@@ -42,6 +42,17 @@ const normalizePosition = (position?: Partial<XYPosition>): XYPosition => ({
 // Compartment Builders
 // ============================================================================
 
+/**
+ * Format action for display in compartments
+ * Handles both string actions and action references
+ */
+const formatActionDisplay = (action: string | { actionName: string; actionType: string } | undefined): string | undefined => {
+  if (!action) return undefined;
+  if (typeof action === 'string') return action;
+  // Action reference: show name with link indicator
+  return `→ ${action.actionName}`;
+};
+
 const buildCompartment = (title: string, items: SysMLCompartment['items']): SysMLCompartment => ({
   title,
   items
@@ -144,10 +155,13 @@ const createGenericNode = (
     config.dataMappers.forEach((mapper) => mapper(spec, baseData));
   }
 
-  // Build compartments
-  const compartments = config.compartmentBuilders
+  // Build compartments from builders
+  const builtCompartments = config.compartmentBuilders
     ? config.compartmentBuilders.map((builder) => builder(spec)).filter(Boolean)
     : [];
+
+  // Use compartments from spec if they exist (e.g., from backend transformation), otherwise use built ones
+  const compartments = spec.compartments || builtCompartments;
 
   return {
     id: spec.id,
@@ -159,7 +173,11 @@ const createGenericNode = (
     data: {
       ...baseData,
       ...(config.elementKind && { elementKind: config.elementKind }),
-      ...(compartments.length > 0 && { compartments: compartments as SysMLCompartment[] })
+      ...(compartments.length > 0 && {
+        compartments: compartments as SysMLCompartment[],
+        showCompartments: true  // Default to showing compartments
+      }),
+      spec // Include the full spec so we have access to parameters
     }
   };
 };
@@ -254,7 +272,8 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
     elementKind: 'definition',
     compartmentBuilders: [
       (spec) => stringsToCompartment('direction', spec.direction ? [spec.direction] : undefined),
-      (spec) => propertiesToItems('items', spec.items)
+      (spec) => propertiesToItems('items', spec.items),
+      (spec) => spec.interface ? buildCompartment('interface', [{ label: spec.interface }]) : undefined
     ]
   },
   'port-usage': {
@@ -264,7 +283,8 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
     dataMappers: [addBaseDefinition],
     compartmentBuilders: [
       (spec) => stringsToCompartment('direction', spec.direction ? [spec.direction] : undefined),
-      (spec) => propertiesToItems('items', spec.items)
+      (spec) => propertiesToItems('items', spec.items),
+      (spec) => spec.interface ? buildCompartment('interface', [{ label: spec.interface }]) : undefined
     ]
   },
 
@@ -387,8 +407,20 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
     kind: 'action-definition',
     elementKind: 'definition',
     compartmentBuilders: [
+      (spec) => spec.preconditions ? buildCompartment('preconditions',
+        spec.preconditions.map((c: any) => ({ label: c.expression }))
+      ) : undefined,
       (spec) => propertiesToItems('inputs', spec.inputs),
-      (spec) => propertiesToItems('outputs', spec.outputs)
+      (spec) => propertiesToItems('outputs', spec.outputs),
+      (spec) => spec.localVariables ? buildCompartment('local variables',
+        spec.localVariables.map((v: any) => ({
+          label: v.name,
+          value: v.type || ''
+        }))
+      ) : undefined,
+      (spec) => spec.postconditions ? buildCompartment('postconditions',
+        spec.postconditions.map((c: any) => ({ label: c.expression }))
+      ) : undefined
     ]
   },
   'action-usage': {
@@ -397,8 +429,20 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
     elementKind: 'usage',
     dataMappers: [addBaseDefinition, addRedefines],
     compartmentBuilders: [
+      (spec) => spec.preconditions ? buildCompartment('preconditions',
+        spec.preconditions.map((c: any) => ({ label: c.expression }))
+      ) : undefined,
       (spec) => propertiesToItems('inputs', spec.inputs),
-      (spec) => propertiesToItems('outputs', spec.outputs)
+      (spec) => propertiesToItems('outputs', spec.outputs),
+      (spec) => spec.localVariables ? buildCompartment('local variables',
+        spec.localVariables.map((v: any) => ({
+          label: v.name,
+          value: v.type || ''
+        }))
+      ) : undefined,
+      (spec) => spec.postconditions ? buildCompartment('postconditions',
+        spec.postconditions.map((c: any) => ({ label: c.expression }))
+      ) : undefined
     ]
   },
 
@@ -520,7 +564,15 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
       }
     ],
     compartmentBuilders: [
-      (spec) => ({ title: 'states', items: spec.states.map((state: any) => ({ label: state.name })) })
+      (spec) => spec.states && spec.states.length > 0
+        ? {
+            title: 'states',
+            items: spec.states.map((state: any) => ({
+              label: state.name,
+              value: state.definitionName ? `(${state.definitionName})` : ''
+            }))
+          }
+        : undefined
     ]
   },
   'state-definition': {
@@ -528,7 +580,24 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
     kind: 'state-definition',
     elementKind: 'definition',
     compartmentBuilders: [
-      (spec) => stringsToCompartment('substates', spec.substates)
+      (spec) => {
+        const action = formatActionDisplay(spec.entryAction);
+        return action ? buildCompartment('entry', [{ label: action }]) : undefined;
+      },
+      (spec) => {
+        const action = formatActionDisplay(spec.doActivity);
+        return action ? buildCompartment('do', [{ label: action }]) : undefined;
+      },
+      (spec) => {
+        const action = formatActionDisplay(spec.exitAction);
+        return action ? buildCompartment('exit', [{ label: action }]) : undefined;
+      },
+      (spec) => stringsToCompartment('substates', spec.substates),
+      (spec) => spec.internalTransitions ? buildCompartment('internal transitions',
+        spec.internalTransitions.map((t: any) => ({
+          label: [t.trigger, t.guard, t.effect].filter(Boolean).join(' / ')
+        }))
+      ) : undefined
     ]
   },
   'state-usage': {
@@ -537,10 +606,24 @@ const NODE_CONFIGS: Record<SysMLNodeKind, NodeFactoryConfig> = {
     elementKind: 'usage',
     dataMappers: [addBaseDefinition],
     compartmentBuilders: [
-      (spec) => spec.entryAction ? buildCompartment('entry', [{ label: spec.entryAction }]) : undefined,
-      (spec) => spec.doAction ? buildCompartment('do', [{ label: spec.doAction }]) : undefined,
-      (spec) => spec.exitAction ? buildCompartment('exit', [{ label: spec.exitAction }]) : undefined,
-      (spec) => stringsToCompartment('substates', spec.substates)
+      (spec) => {
+        const action = formatActionDisplay(spec.entryAction);
+        return action ? buildCompartment('entry', [{ label: action }]) : undefined;
+      },
+      (spec) => {
+        const action = formatActionDisplay(spec.doActivity);
+        return action ? buildCompartment('do', [{ label: action }]) : undefined;
+      },
+      (spec) => {
+        const action = formatActionDisplay(spec.exitAction);
+        return action ? buildCompartment('exit', [{ label: action }]) : undefined;
+      },
+      (spec) => stringsToCompartment('substates', spec.substates),
+      (spec) => spec.internalTransitions ? buildCompartment('internal transitions',
+        spec.internalTransitions.map((t: any) => ({
+          label: [t.trigger, t.guard, t.effect].filter(Boolean).join(' / ')
+        }))
+      ) : undefined
     ]
   },
   'transition-usage': {

@@ -79,6 +79,19 @@ export function useSysMLMutations(_viewpointId?: string) {
     onSuccess: invalidateModel,
   });
 
+  const createStateInStateMachineMutation = useMutation({
+    mutationFn: ({
+      stateMachineId,
+      stateDefinitionId,
+      stateName,
+    }: {
+      stateMachineId: string;
+      stateDefinitionId: string;
+      stateName: string;
+    }) => apiClient.createStateInStateMachine(stateMachineId, stateDefinitionId, stateName),
+    onSuccess: invalidateModel,
+  });
+
   const updatePositionMutation = useMutation({
     mutationFn: ({
       id,
@@ -100,6 +113,7 @@ export function useSysMLMutations(_viewpointId?: string) {
     updateRelationship: updateRelationshipMutation,
     deleteRelationship: deleteRelationshipMutation,
     createComposition: createCompositionMutation,
+    createStateInStateMachine: createStateInStateMachineMutation,
     updatePosition: updatePositionMutation,
   };
 }
@@ -208,6 +222,22 @@ export function useDiagramMutations() {
     },
   });
 
+  const hideRelationshipFromDiagramMutation = useMutation({
+    mutationFn: ({ diagramId, relationshipId }: { diagramId: string; relationshipId: string }) =>
+      apiClient.hideRelationshipFromDiagram(diagramId, relationshipId),
+    onSuccess: (_data, variables) => {
+      invalidateDiagram(variables.diagramId);
+    },
+  });
+
+  const showRelationshipInDiagramMutation = useMutation({
+    mutationFn: ({ diagramId, relationshipId }: { diagramId: string; relationshipId: string }) =>
+      apiClient.showRelationshipInDiagram(diagramId, relationshipId),
+    onSuccess: (_data, variables) => {
+      invalidateDiagram(variables.diagramId);
+    },
+  });
+
   return {
     createDiagram: createDiagramMutation,
     updateDiagram: updateDiagramMutation,
@@ -216,5 +246,7 @@ export function useDiagramMutations() {
     removeElementFromDiagram: removeElementFromDiagramMutation,
     updateElementPositionInDiagram: updateElementPositionInDiagramMutation,
     updateDiagramPositions: updateDiagramPositionsMutation,
+    hideRelationshipFromDiagram: hideRelationshipFromDiagramMutation,
+    showRelationshipInDiagram: showRelationshipInDiagramMutation,
   };
 }

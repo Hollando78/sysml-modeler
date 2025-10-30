@@ -56,7 +56,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
   }, [x, y]);
 
   return (
-    <div ref={menuRef} style={styles.container}>
+    <div ref={menuRef} style={styles.container} data-context-menu="true">
       {items.map((item, index) => {
         if (item.separator) {
           return <div key={index} style={styles.separator} />;

@@ -94,11 +94,68 @@ export function specToNeo4jProperties(spec: any): Record<string, any> {
   if (spec.tags && Array.isArray(spec.tags)) {
     props.tags = JSON.stringify(spec.tags);
   }
+  if (spec.parameters && Array.isArray(spec.parameters)) {
+    props.parameters = JSON.stringify(spec.parameters);
+  }
+  if (spec.internalTransitions !== undefined) {
+    if (Array.isArray(spec.internalTransitions) && spec.internalTransitions.length > 0) {
+      props.internalTransitions = JSON.stringify(spec.internalTransitions);
+    } else {
+      props.internalTransitions = null; // Explicitly clear the property
+    }
+  }
+  if (spec.preconditions && Array.isArray(spec.preconditions)) {
+    props.preconditions = JSON.stringify(spec.preconditions);
+  }
+  if (spec.postconditions && Array.isArray(spec.postconditions)) {
+    props.postconditions = JSON.stringify(spec.postconditions);
+  }
+  if (spec.localVariables && Array.isArray(spec.localVariables)) {
+    props.localVariables = JSON.stringify(spec.localVariables);
+  }
 
   // State-specific properties
-  if (spec.entryAction) props.entryAction = spec.entryAction;
-  if (spec.exitAction) props.exitAction = spec.exitAction;
-  if (spec.doActivity) props.doActivity = spec.doActivity;
+  // Actions can be strings (simple text) or objects (action references)
+  if (spec.entryAction !== undefined) {
+    if (typeof spec.entryAction === 'object' && spec.entryAction !== null) {
+      props.entryAction = JSON.stringify(spec.entryAction);
+    } else {
+      props.entryAction = spec.entryAction || null; // Allow clearing
+    }
+  }
+  if (spec.exitAction !== undefined) {
+    if (typeof spec.exitAction === 'object' && spec.exitAction !== null) {
+      props.exitAction = JSON.stringify(spec.exitAction);
+    } else {
+      props.exitAction = spec.exitAction || null; // Allow clearing
+    }
+  }
+  if (spec.doActivity !== undefined) {
+    if (typeof spec.doActivity === 'object' && spec.doActivity !== null) {
+      props.doActivity = JSON.stringify(spec.doActivity);
+    } else {
+      props.doActivity = spec.doActivity || null; // Allow clearing
+    }
+  }
+
+  // Port-specific properties
+  if (spec.interface) props.interface = spec.interface;
+
+  // Use case properties
+  if (spec.actors && Array.isArray(spec.actors)) {
+    props.actors = JSON.stringify(spec.actors);
+  }
+  if (spec.includes && Array.isArray(spec.includes)) {
+    props.includes = JSON.stringify(spec.includes);
+  }
+  if (spec.includedUseCases && Array.isArray(spec.includedUseCases)) {
+    props.includedUseCases = JSON.stringify(spec.includedUseCases);
+  }
+  if (spec.extends && Array.isArray(spec.extends)) {
+    props.extends = JSON.stringify(spec.extends);
+  }
+  if (spec.objectiveRequirement) props.objectiveRequirement = spec.objectiveRequirement;
+  if (spec.subjectParameter) props.subjectParameter = spec.subjectParameter;
 
   // Relationship-specific properties (for edges)
   if (spec.trigger) props.trigger = spec.trigger;
@@ -153,11 +210,101 @@ export function neo4jPropertiesToSpec(properties: Record<string, any>): any {
       console.warn('Failed to parse tags JSON:', e);
     }
   }
+  if (properties.parameters) {
+    try {
+      spec.parameters = JSON.parse(properties.parameters);
+    } catch (e) {
+      console.warn('Failed to parse parameters JSON:', e);
+    }
+  }
+  if (properties.internalTransitions) {
+    try {
+      spec.internalTransitions = JSON.parse(properties.internalTransitions);
+    } catch (e) {
+      console.warn('Failed to parse internalTransitions JSON:', e);
+    }
+  }
+  if (properties.preconditions) {
+    try {
+      spec.preconditions = JSON.parse(properties.preconditions);
+    } catch (e) {
+      console.warn('Failed to parse preconditions JSON:', e);
+    }
+  }
+  if (properties.postconditions) {
+    try {
+      spec.postconditions = JSON.parse(properties.postconditions);
+    } catch (e) {
+      console.warn('Failed to parse postconditions JSON:', e);
+    }
+  }
+  if (properties.localVariables) {
+    try {
+      spec.localVariables = JSON.parse(properties.localVariables);
+    } catch (e) {
+      console.warn('Failed to parse localVariables JSON:', e);
+    }
+  }
 
   // State-specific
-  if (properties.entryAction) spec.entryAction = properties.entryAction;
-  if (properties.exitAction) spec.exitAction = properties.exitAction;
-  if (properties.doActivity) spec.doActivity = properties.doActivity;
+  // Actions can be strings or JSON objects (action references)
+  if (properties.entryAction) {
+    try {
+      spec.entryAction = JSON.parse(properties.entryAction);
+    } catch (e) {
+      // If not valid JSON, treat as plain string
+      spec.entryAction = properties.entryAction;
+    }
+  }
+  if (properties.exitAction) {
+    try {
+      spec.exitAction = JSON.parse(properties.exitAction);
+    } catch (e) {
+      spec.exitAction = properties.exitAction;
+    }
+  }
+  if (properties.doActivity) {
+    try {
+      spec.doActivity = JSON.parse(properties.doActivity);
+    } catch (e) {
+      spec.doActivity = properties.doActivity;
+    }
+  }
+
+  // Port-specific
+  if (properties.interface) spec.interface = properties.interface;
+
+  // Use case properties
+  if (properties.actors) {
+    try {
+      spec.actors = JSON.parse(properties.actors);
+    } catch (e) {
+      console.warn('Failed to parse actors JSON:', e);
+    }
+  }
+  if (properties.includes) {
+    try {
+      spec.includes = JSON.parse(properties.includes);
+    } catch (e) {
+      console.warn('Failed to parse includes JSON:', e);
+    }
+  }
+  if (properties.includedUseCases) {
+    try {
+      spec.includedUseCases = JSON.parse(properties.includedUseCases);
+    } catch (e) {
+      console.warn('Failed to parse includedUseCases JSON:', e);
+    }
+  }
+  if (properties.extends) {
+    try {
+      spec.extends = JSON.parse(properties.extends);
+    } catch (e) {
+      console.warn('Failed to parse extends JSON:', e);
+    }
+  }
+  if (properties.objectiveRequirement) spec.objectiveRequirement = properties.objectiveRequirement;
+  if (properties.subjectParameter) spec.subjectParameter = properties.subjectParameter;
 
   // Relationship-specific
   if (properties.trigger) spec.trigger = properties.trigger;

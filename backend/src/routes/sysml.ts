@@ -209,6 +209,36 @@ router.patch('/diagrams/:id/elements/:elementId/position', async (req: Request, 
 });
 
 /**
+ * POST /api/sysml/diagrams/:id/relationships/:relationshipId/hide
+ * Hide a relationship from a diagram
+ */
+router.post('/diagrams/:id/relationships/:relationshipId/hide', async (req: Request, res: Response) => {
+  try {
+    const { id, relationshipId } = req.params;
+    await diagramService.hideRelationshipFromDiagram(id, relationshipId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error hiding relationship from diagram:', error);
+    res.status(500).json({ error: 'Failed to hide relationship from diagram' });
+  }
+});
+
+/**
+ * POST /api/sysml/diagrams/:id/relationships/:relationshipId/show
+ * Show a hidden relationship in a diagram
+ */
+router.post('/diagrams/:id/relationships/:relationshipId/show', async (req: Request, res: Response) => {
+  try {
+    const { id, relationshipId } = req.params;
+    await diagramService.showRelationshipInDiagram(id, relationshipId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error showing relationship in diagram:', error);
+    res.status(500).json({ error: 'Failed to show relationship in diagram' });
+  }
+});
+
+/**
  * PATCH /api/sysml/diagrams/:id/positions
  * Bulk update positions for all elements in a diagram
  */
@@ -368,6 +398,52 @@ router.post('/compositions', async (req: Request, res: Response) => {
       console.error('Error creating composition:', error);
       return res.status(500).json({ error: 'Failed to create composition' });
     }
+  }
+});
+
+/**
+ * POST /api/sysml/state-machines/:id/states
+ * Add a state to a state machine (creates intermediate state-usage)
+ */
+router.post('/state-machines/:id/states', async (req: Request, res: Response) => {
+  try {
+    const { id: stateMachineId } = req.params;
+    const schema = z.object({
+      stateDefinitionId: z.string(),
+      stateName: z.string(),
+    });
+
+    const { stateDefinitionId, stateName } = schema.parse(req.body);
+    const result = await modelService.createStateInStateMachine(stateMachineId, stateDefinitionId, stateName);
+
+    return res.status(201).json({
+      success: true,
+      stateUsageId: result.stateUsageId,
+      definitionRelId: result.definitionRelId,
+      compositionRelId: result.compositionRelId,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: error.errors });
+    } else {
+      console.error('Error creating state in state machine:', error);
+      return res.status(500).json({ error: 'Failed to create state in state machine' });
+    }
+  }
+});
+
+/**
+ * DELETE /api/sysml/state-machines/states/:stateUsageId
+ * Remove a state from a state machine
+ */
+router.delete('/state-machines/states/:stateUsageId', async (req: Request, res: Response) => {
+  try {
+    const { stateUsageId } = req.params;
+    await modelService.deleteStateFromStateMachine(stateUsageId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting state from state machine:', error);
+    res.status(500).json({ error: 'Failed to delete state from state machine' });
   }
 });
 

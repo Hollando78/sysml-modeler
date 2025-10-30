@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { applyNodeChanges, applyEdgeChanges, ConnectionLineType } from 'reactflow';
-import { Scissors, Copy, Clipboard, Edit, Type, Trash2, Network } from 'lucide-react';
+import { Scissors, Copy, Clipboard, Edit, Type, Trash2, Network, EyeOff } from 'lucide-react';
 import { SysMLDiagram, createNodesFromSpecs, createEdgesFromRelationships } from '../../lib/sysml-diagram';
 import type { SysMLNodeSpec as LibSysMLNodeSpec, SysMLRelationshipSpec as LibSysMLRelationshipSpec, SysMLNodeData } from '../../lib/sysml-diagram/types';
 import { useSysMLModel, useSysMLMutations, useDiagramMutations, useSysMLDiagram } from '../../hooks/useSysMLApi';
@@ -11,6 +11,7 @@ import type { ToolbarMode } from './SysMLToolbar';
 import NodeEditor from './NodeEditor';
 import PromptModal from '../common/PromptModal';
 import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu';
+import ConfirmModal from '../common/ConfirmModal';
 import React from 'react';
 
 interface SysMLCanvasProps {
@@ -51,6 +52,13 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
   const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edge: Edge } | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<{ nodeId: string; handleId?: string } | null>(null);
   const [clipboard, setClipboard] = useState<{ action: 'cut' | 'copy'; node: Node<SysMLNodeData> } | null>(null);
+  const [deleteNodeConfirm, setDeleteNodeConfirm] = useState<{ node: Node<SysMLNodeData> } | null>(null);
+  const [deleteEdgeConfirm, setDeleteEdgeConfirm] = useState<{ edge: Edge } | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+  // Track whether React Flow's keyboard delete is being used
+  // This helps us distinguish user-initiated deletions from data sync removals
+  const isKeyboardDeleteRef = useRef(false);
 
   // Notify parent of undo/redo state changes
   useEffect(() => {
@@ -61,6 +69,22 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
   useEffect(() => {
     undoRedoRef?.(undo, redo);
   }, [undo, redo, undoRedoRef]);
+
+  // Listen for keyboard delete events to distinguish user-initiated deletions
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        isKeyboardDeleteRef.current = true;
+        // Reset after a short delay to handle the node removal event
+        setTimeout(() => {
+          isKeyboardDeleteRef.current = false;
+        }, 100);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   console.log('[DEBUG] SysMLCanvas render', {
     toolbarMode,
@@ -98,11 +122,31 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       // Use positions from the diagram
       const positions = activeDiagram.positions;
 
+      // Filter out hidden relationships
+      const hiddenRelIds = activeDiagram.hiddenRelationshipIds || [];
+      const visibleRelationships = model.relationships.filter(rel => !hiddenRelIds.includes(rel.id));
+
       const reactFlowNodes = createNodesFromSpecs(filteredNodes as LibSysMLNodeSpec[], positions);
-      const reactFlowEdges = createEdgesFromRelationships(model.relationships as LibSysMLRelationshipSpec[]);
+      const reactFlowEdges = createEdgesFromRelationships(visibleRelationships as LibSysMLRelationshipSpec[]);
+
+      // Debug: Log use case nodes with their compartments
+      reactFlowNodes.forEach(node => {
+        if (node.data.kind === 'use-case-usage' || node.data.kind === 'use-case-definition') {
+          console.log('[DEBUG] Use case node:', {
+            id: node.id,
+            name: node.data.name,
+            kind: node.data.kind,
+            compartments: node.data.compartments,
+            compartmentCount: node.data.compartments?.length || 0,
+            spec: filteredNodes.find(n => n.spec.id === node.id)?.spec
+          });
+        }
+      });
 
       console.log('[DEBUG] Created React Flow nodes', {
         nodeCount: reactFlowNodes.length,
+        edgeCount: reactFlowEdges.length,
+        hiddenRelationships: hiddenRelIds.length,
         nodes: reactFlowNodes.map((n) => ({
           id: n.id,
           type: n.type,
@@ -160,9 +204,19 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
   );
 
   const handlePromptConfirm = useCallback(async (name: string) => {
+    console.log('[DEBUG] handlePromptConfirm called:', {
+      name,
+      promptDataKind: promptData?.kind,
+      hasCompositionData: !!promptData?.compositionData,
+      activeDiagram: activeDiagram?.id,
+    });
+
     setShowPrompt(false);
 
-    if (!promptData || !activeDiagram) return;
+    if (!promptData || !activeDiagram) {
+      console.log('[DEBUG] Missing promptData or activeDiagram, returning');
+      return;
+    }
 
     // Check if this is a composition dropped on blank canvas
     if (promptData.kind === 'composition-on-canvas' && promptData.compositionData) {
@@ -280,6 +334,81 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         });
       } catch (error) {
         console.error('[DEBUG] Error creating composition on canvas:', error);
+      }
+    } else if (promptData.kind === 'state-in-statemachine' && promptData.compositionData) {
+      const { sourceId, targetId } = promptData.compositionData;
+
+      console.log('[DEBUG] Creating state-in-statemachine:', {
+        stateMachineId: sourceId,
+        stateDefinitionId: targetId,
+        stateName: name,
+        hasMutation: !!elementMutations.createStateInStateMachine,
+      });
+
+      try {
+        console.log('[DEBUG] About to call createStateInStateMachine mutation...');
+
+        // Create state in state machine (creates state-usage, definition rel, and composition rel)
+        const result = await elementMutations.createStateInStateMachine.mutateAsync({
+          stateMachineId: sourceId,
+          stateDefinitionId: targetId,
+          stateName: name,
+        });
+
+        console.log('[DEBUG] State-in-statemachine created successfully:', result);
+
+        // Add the state-usage to the diagram so it's visible
+        await diagramMutations.addElementsToDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          elementIds: [result.stateUsageId],
+        });
+
+        // Position the state-usage between the state machine and state definition
+        const stateMachineNode = nodes.find(n => n.id === sourceId);
+        const stateDefinitionNode = nodes.find(n => n.id === targetId);
+        if (stateMachineNode && stateDefinitionNode) {
+          const midX = (stateMachineNode.position.x + stateDefinitionNode.position.x) / 2;
+          const midY = (stateMachineNode.position.y + stateDefinitionNode.position.y) / 2;
+          await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementId: result.stateUsageId,
+            position: { x: midX, y: midY },
+          });
+        }
+
+        // Add undo/redo action
+        addAction({
+          type: 'create-state-in-statemachine',
+          data: { stateMachineId: sourceId, stateDefinitionId: targetId, stateName: name, ...result },
+          description: `Add state "${name}" to state machine`,
+          undo: async () => {
+            // Remove from diagram and delete the state-usage (which will cascade delete the relationships)
+            await diagramMutations.removeElementFromDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementId: result.stateUsageId,
+            });
+            await elementMutations.deleteElement.mutateAsync(result.stateUsageId);
+          },
+          redo: async () => {
+            // Recreate the state
+            const redoResult = await elementMutations.createStateInStateMachine.mutateAsync({
+              stateMachineId: sourceId,
+              stateDefinitionId: targetId,
+              stateName: name,
+            });
+            // Add to diagram
+            await diagramMutations.addElementsToDiagram.mutateAsync({
+              diagramId: activeDiagram.id,
+              elementIds: [redoResult.stateUsageId],
+            });
+          },
+        });
+      } catch (error) {
+        console.error('[DEBUG] Error creating state-in-statemachine:', error);
+        console.error('[DEBUG] Error details:', {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
       }
     } else if (promptData.kind === 'composition' && promptData.compositionData) {
       const { sourceId, targetId, compositionType } = promptData.compositionData;
@@ -412,6 +541,8 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
     setNodes((nds) => {
       // Handle node removal (delete key)
+      // IMPORTANT: Only process removals that are user-initiated (via keyboard delete)
+      // If isKeyboardDeleteRef is false, the removal is from a data sync (e.g., Model Browser delete)
       changes.forEach((change) => {
         if (change.type === 'remove') {
           const nodeToRemove = nds.find(n => n.id === change.id);
@@ -423,51 +554,57 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
               id: change.id,
               nodeData,
               position: nodePosition,
+              isKeyboardDelete: isKeyboardDeleteRef.current,
             });
 
-            // Remove from diagram and delete element
-            (async () => {
-              try {
-                await diagramMutations.removeElementFromDiagram.mutateAsync({
-                  diagramId: activeDiagram.id,
-                  elementId: change.id,
-                });
-                await elementMutations.deleteElement.mutateAsync(change.id);
+            // Only process the deletion if it's user-initiated via keyboard
+            if (isKeyboardDeleteRef.current) {
+              // Remove from diagram and delete element
+              (async () => {
+                try {
+                  await diagramMutations.removeElementFromDiagram.mutateAsync({
+                    diagramId: activeDiagram.id,
+                    elementId: change.id,
+                  });
+                  await elementMutations.deleteElement.mutateAsync(change.id);
 
-                // Add undo/redo action
-                addAction({
-                  type: 'delete-node',
-                  data: { id: change.id, nodeData, position: nodePosition, diagramId: activeDiagram.id },
-                  description: `Delete node ${change.id}`,
-                  undo: async () => {
-                    // Recreate element and add to diagram
-                    await elementMutations.createElement.mutateAsync({
-                      kind: nodeData.kind,
-                      spec: { id: change.id, name: nodeData.name },
-                    });
-                    await diagramMutations.addElementsToDiagram.mutateAsync({
-                      diagramId: activeDiagram.id,
-                      elementIds: [change.id],
-                    });
-                    await diagramMutations.updateElementPositionInDiagram.mutateAsync({
-                      diagramId: activeDiagram.id,
-                      elementId: change.id,
-                      position: nodePosition,
-                    });
-                  },
-                  redo: async () => {
-                    // Delete element again
-                    await diagramMutations.removeElementFromDiagram.mutateAsync({
-                      diagramId: activeDiagram.id,
-                      elementId: change.id,
-                    });
-                    await elementMutations.deleteElement.mutateAsync(change.id);
-                  },
-                });
-              } catch (error) {
-                console.error('[DEBUG] Error deleting node:', error);
-              }
-            })();
+                  // Add undo/redo action
+                  addAction({
+                    type: 'delete-node',
+                    data: { id: change.id, nodeData, position: nodePosition, diagramId: activeDiagram.id },
+                    description: `Delete node ${change.id}`,
+                    undo: async () => {
+                      // Recreate element and add to diagram
+                      await elementMutations.createElement.mutateAsync({
+                        kind: nodeData.kind,
+                        spec: { id: change.id, name: nodeData.name },
+                      });
+                      await diagramMutations.addElementsToDiagram.mutateAsync({
+                        diagramId: activeDiagram.id,
+                        elementIds: [change.id],
+                      });
+                      await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+                        diagramId: activeDiagram.id,
+                        elementId: change.id,
+                        position: nodePosition,
+                      });
+                    },
+                    redo: async () => {
+                      // Delete element again
+                      await diagramMutations.removeElementFromDiagram.mutateAsync({
+                        diagramId: activeDiagram.id,
+                        elementId: change.id,
+                      });
+                      await elementMutations.deleteElement.mutateAsync(change.id);
+                    },
+                  });
+                } catch (error) {
+                  console.error('[DEBUG] Error deleting node:', error);
+                }
+              })();
+            } else {
+              console.log('[DEBUG] Skipping deletion - node was removed by external action (e.g., Model Browser delete)');
+            }
           }
         }
       });
@@ -596,22 +733,76 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
   const onConnect: OnConnect = useCallback(
     (connection) => {
-      console.log('[DEBUG] onConnect triggered', { connection, toolbarMode });
+      console.log('[DEBUG] ========== onConnect triggered ==========', {
+        connection,
+        toolbarMode,
+        toolbarDataType: toolbarData?.type,
+        hasSource: !!connection.source,
+        hasTarget: !!connection.target,
+      });
 
       if (toolbarMode === 'create-relationship' && toolbarData?.type && connection.source && connection.target) {
         // Check if this is a composition or aggregation (SysML v2.0 compliant)
         if (toolbarData.type === 'composition' || toolbarData.type === 'aggregation') {
-          // Show prompt modal for part name
-          setPromptData({
-            kind: 'composition',
-            clickPosition: { x: 0, y: 0 }, // Not used for composition
-            compositionData: {
-              sourceId: connection.source,
-              targetId: connection.target,
-              compositionType: toolbarData.type as 'composition' | 'aggregation',
-            },
+          // Check if we're connecting a state-machine to a state-definition (or reverse)
+          const sourceNode = nodes.find(n => n.id === connection.source);
+          const targetNode = nodes.find(n => n.id === connection.target);
+
+          console.log('[DEBUG] Composition connection attempt:', {
+            connectionSource: connection.source,
+            connectionTarget: connection.target,
+            nodesLength: nodes.length,
+            foundSourceNode: !!sourceNode,
+            foundTargetNode: !!targetNode,
+            sourceNodeId: sourceNode?.id,
+            targetNodeId: targetNode?.id,
+            sourceNodeKind: sourceNode?.data?.kind,
+            targetNodeKind: targetNode?.data?.kind,
           });
-          setShowPrompt(true);
+
+          const isStateMachineToStateDefinition =
+            sourceNode?.data?.kind === 'state-machine' && targetNode?.data?.kind === 'state-definition';
+          const isStateDefinitionToStateMachine =
+            sourceNode?.data?.kind === 'state-definition' && targetNode?.data?.kind === 'state-machine';
+
+          console.log('[DEBUG] Composition connection check:', {
+            sourceKind: sourceNode?.data?.kind,
+            targetKind: targetNode?.data?.kind,
+            isStateMachineToStateDefinition,
+            isStateDefinitionToStateMachine,
+          });
+
+          if (isStateMachineToStateDefinition || isStateDefinitionToStateMachine) {
+            console.log('[DEBUG] Detected state-machine <-> state-definition connection!');
+
+            // Determine which is which
+            const stateMachineId = isStateMachineToStateDefinition ? connection.source : connection.target;
+            const stateDefinitionId = isStateMachineToStateDefinition ? connection.target : connection.source;
+
+            // Show prompt modal for state name (state-in-statemachine pattern)
+            setPromptData({
+              kind: 'state-in-statemachine',
+              clickPosition: { x: 0, y: 0 }, // Not used
+              compositionData: {
+                sourceId: stateMachineId, // state machine
+                targetId: stateDefinitionId, // state definition
+                compositionType: toolbarData.type as 'composition' | 'aggregation',
+              },
+            });
+            setShowPrompt(true);
+          } else {
+            // Show prompt modal for part name
+            setPromptData({
+              kind: 'composition',
+              clickPosition: { x: 0, y: 0 }, // Not used for composition
+              compositionData: {
+                sourceId: connection.source,
+                targetId: connection.target,
+                compositionType: toolbarData.type as 'composition' | 'aggregation',
+              },
+            });
+            setShowPrompt(true);
+          }
         } else {
           // Regular relationship (not composition/aggregation)
           const id = `${connection.source}-${toolbarData.type}-${connection.target}`;
@@ -635,6 +826,71 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
             try {
               await elementMutations.createRelationship.mutateAsync(relationshipSpec);
 
+              // For use case extend/include relationships, also update the source node's compartment
+              if (toolbarData.type === 'extend' || toolbarData.type === 'include') {
+                const sourceNode = nodes.find(n => n.id === connection.source);
+                const targetNode = nodes.find(n => n.id === connection.target);
+
+                console.log('[DEBUG] Checking use case relationship sync', {
+                  relationshipType: toolbarData.type,
+                  sourceNode: sourceNode ? { id: sourceNode.id, kind: sourceNode.data.kind, name: sourceNode.data.name } : null,
+                  targetNode: targetNode ? { id: targetNode.id, kind: targetNode.data.kind, name: targetNode.data.name } : null,
+                  isUseCaseNode: sourceNode && (sourceNode.data.kind === 'use-case-usage' || sourceNode.data.kind === 'use-case-definition')
+                });
+
+                if (sourceNode && targetNode &&
+                    (sourceNode.data.kind === 'use-case-usage' || sourceNode.data.kind === 'use-case-definition')) {
+
+                  console.log('[DEBUG] Syncing use case compartment for', toolbarData.type, {
+                    sourceId: sourceNode.id,
+                    sourceName: sourceNode.data.name,
+                    targetId: targetNode.id,
+                    targetName: targetNode.data.name
+                  });
+
+                  // Get current extends/includes arrays
+                  const currentExtends = (sourceNode.data as any).extends || [];
+                  const currentIncludes = (sourceNode.data as any).includes || (sourceNode.data as any).includedUseCases || [];
+
+                  // Add target name to appropriate array
+                  const updates: any = {};
+                  if (toolbarData.type === 'extend') {
+                    // Only use case usages have extends (per SysML v2 spec)
+                    if (sourceNode.data.kind === 'use-case-usage') {
+                      if (!currentExtends.includes(targetNode.data.name)) {
+                        updates.extends = [...currentExtends, targetNode.data.name];
+                        console.log('[DEBUG] Adding extend:', targetNode.data.name, 'to usage:', sourceNode.data.name);
+                      } else {
+                        console.log('[DEBUG] Extend already exists:', targetNode.data.name);
+                      }
+                    } else {
+                      console.warn('[WARN] Cannot add extends to use-case-definition. Only use-case-usages can extend other use cases.');
+                    }
+                  } else if (toolbarData.type === 'include') {
+                    // Both definitions and usages have includes
+                    if (!currentIncludes.includes(targetNode.data.name)) {
+                      if (sourceNode.data.kind === 'use-case-definition') {
+                        updates.includedUseCases = [...currentIncludes, targetNode.data.name];
+                      } else {
+                        updates.includes = [...currentIncludes, targetNode.data.name];
+                      }
+                    }
+                  }
+
+                  // Update node if there are changes
+                  if (Object.keys(updates).length > 0) {
+                    console.log('[DEBUG] Updating use case node with:', { id: sourceNode.id, updates });
+                    await elementMutations.updateElement.mutateAsync({
+                      id: sourceNode.id,
+                      updates
+                    });
+                    console.log('[DEBUG] Use case node updated successfully');
+                  } else {
+                    console.log('[DEBUG] No updates needed - target already in list or no changes');
+                  }
+                }
+              }
+
               // Add undo/redo action
               addAction({
                 type: 'create-edge',
@@ -654,7 +910,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         }
       }
     },
-    [toolbarMode, toolbarData, elementMutations, addAction]
+    [toolbarMode, toolbarData, elementMutations, addAction, nodes]
   );
 
   const onConnectStart = useCallback(
@@ -669,7 +925,29 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
 
   const onConnectEnd: OnConnectEnd = useCallback(
     (event) => {
+      console.log('[DEBUG] onConnectEnd triggered', {
+        hasConnectingFrom: !!connectingFrom,
+        target: event.target,
+      });
+
       if (!connectingFrom || !activeDiagram) {
+        setConnectingFrom(null);
+        return;
+      }
+
+      // Check if the connection ended on a node (vs. blank canvas)
+      // If it ended on a node, onConnect will handle it, so we skip this
+      const target = event.target as HTMLElement;
+      const isOnNode = target.closest('.react-flow__node') !== null;
+
+      console.log('[DEBUG] onConnectEnd analysis', {
+        isOnNode,
+        targetElement: target.className,
+      });
+
+      if (isOnNode) {
+        // Connection ended on a node, onConnect will handle it
+        console.log('[DEBUG] Connection ended on a node, letting onConnect handle it');
         setConnectingFrom(null);
         return;
       }
@@ -680,7 +958,6 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
           (toolbarData.type === 'composition' || toolbarData.type === 'aggregation')) {
 
         // Get the canvas coordinates where the connection was dropped
-        const target = event.target as HTMLElement;
         const reactFlowBounds = target.closest('.react-flow')?.getBoundingClientRect();
 
         if (reactFlowBounds && event instanceof MouseEvent) {
@@ -826,44 +1103,123 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     setEditingNode(node);
   }, []);
 
-  const handleDelete = useCallback(async (node: Node<SysMLNodeData>) => {
+  const handleHideFromDiagram = useCallback(async (node: Node<SysMLNodeData>) => {
     if (!activeDiagram) return;
 
-    if (window.confirm(`Are you sure you want to delete "${node.data.name || node.id}"?`)) {
-      try {
-        await diagramMutations.removeElementFromDiagram.mutateAsync({
-          diagramId: activeDiagram.id,
-          elementId: node.id,
-        });
+    try {
+      await diagramMutations.removeElementFromDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        elementId: node.id,
+      });
 
-        // Clear clipboard if deleted node was in it
-        if (clipboard?.node.id === node.id) {
-          setClipboard(null);
-        }
-
-        // Add undo/redo action
-        addAction({
-          type: 'remove-from-diagram',
-          data: { diagramId: activeDiagram.id, elementId: node.id },
-          description: `Remove ${node.data.kind} "${node.data.name}" from diagram`,
-          undo: async () => {
-            await diagramMutations.addElementsToDiagram.mutateAsync({
-              diagramId: activeDiagram.id,
-              elementIds: [node.id],
-            });
-          },
-          redo: async () => {
-            await diagramMutations.removeElementFromDiagram.mutateAsync({
-              diagramId: activeDiagram.id,
-              elementId: node.id,
-            });
-          },
-        });
-      } catch (error) {
-        console.error('Delete error:', error);
-      }
+      // Add undo/redo action
+      addAction({
+        type: 'remove-from-diagram',
+        data: { diagramId: activeDiagram.id, elementId: node.id, position: node.position },
+        description: `Hide ${node.data.kind} "${node.data.name}" from diagram`,
+        undo: async () => {
+          await diagramMutations.addElementsToDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementIds: [node.id],
+          });
+          // Restore position
+          await diagramMutations.updateElementPositionInDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementId: node.id,
+            position: node.position,
+          });
+        },
+        redo: async () => {
+          await diagramMutations.removeElementFromDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementId: node.id,
+          });
+        },
+      });
+    } catch (error) {
+      console.error('Hide from diagram error:', error);
     }
-  }, [activeDiagram, clipboard, diagramMutations, addAction]);
+  }, [activeDiagram, diagramMutations, addAction]);
+
+  const handleDelete = useCallback((node: Node<SysMLNodeData>) => {
+    if (!activeDiagram) return;
+    setDeleteNodeConfirm({ node });
+  }, [activeDiagram]);
+
+  const confirmNodeDelete = useCallback(async () => {
+    if (!deleteNodeConfirm || !activeDiagram) return;
+
+    const node = deleteNodeConfirm.node;
+    setDeleteNodeConfirm(null);
+
+    try {
+      await diagramMutations.removeElementFromDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        elementId: node.id,
+      });
+
+      // Clear clipboard if deleted node was in it
+      if (clipboard?.node.id === node.id) {
+        setClipboard(null);
+      }
+
+      // Add undo/redo action
+      addAction({
+        type: 'remove-from-diagram',
+        data: { diagramId: activeDiagram.id, elementId: node.id },
+        description: `Remove ${node.data.kind} "${node.data.name}" from diagram`,
+        undo: async () => {
+          await diagramMutations.addElementsToDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementIds: [node.id],
+          });
+        },
+        redo: async () => {
+          await diagramMutations.removeElementFromDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            elementId: node.id,
+          });
+        },
+      });
+    } catch (error) {
+      console.error('Delete error:', error);
+    }
+  }, [deleteNodeConfirm, activeDiagram, clipboard, diagramMutations, addAction]);
+
+  const handleShowAllRelationships = useCallback(async (node: Node<SysMLNodeData>) => {
+    if (!activeDiagram || !model) return;
+
+    // Find all relationships connected to this node
+    const connectedRelationshipIds: string[] = [];
+    model.relationships.forEach((rel) => {
+      if (rel.source === node.id || rel.target === node.id) {
+        connectedRelationshipIds.push(rel.id);
+      }
+    });
+
+    // Filter to only hidden relationships
+    const hiddenRelIds = activeDiagram.hiddenRelationshipIds || [];
+    const hiddenConnectedRels = connectedRelationshipIds.filter(id => hiddenRelIds.includes(id));
+
+    if (hiddenConnectedRels.length === 0) {
+      setInfoMessage('No hidden relationships found for this node.');
+      return;
+    }
+
+    try {
+      // Show all hidden relationships connected to this node
+      for (const relId of hiddenConnectedRels) {
+        await diagramMutations.showRelationshipInDiagram.mutateAsync({
+          diagramId: activeDiagram.id,
+          relationshipId: relId,
+        });
+      }
+
+      console.log(`Shown ${hiddenConnectedRels.length} hidden relationships for node ${node.id}`);
+    } catch (error) {
+      console.error('Error showing relationships:', error);
+    }
+  }, [activeDiagram, model, diagramMutations]);
 
   const handleShowRelatedElements = useCallback(async (node: Node<SysMLNodeData>) => {
     if (!activeDiagram || !model) return;
@@ -885,7 +1241,7 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     );
 
     if (newElementIds.length === 0) {
-      alert('No hidden related elements found for this node.');
+      setInfoMessage('No hidden related elements found for this node.');
       return;
     }
 
@@ -979,14 +1335,24 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
         icon: React.createElement(Network, { size: 14 }),
         onClick: () => handleShowRelatedElements(node),
       },
+      {
+        label: 'Show all relationships',
+        icon: React.createElement(Network, { size: 14 }),
+        onClick: () => handleShowAllRelationships(node),
+      },
       { separator: true, label: '', onClick: () => {} },
+      {
+        label: 'Hide from diagram',
+        icon: React.createElement(EyeOff, { size: 14 }),
+        onClick: () => handleHideFromDiagram(node),
+      },
       {
         label: 'Delete',
         icon: React.createElement(Trash2, { size: 14 }),
         onClick: () => handleDelete(node),
       },
     ];
-  }, [clipboard, handleCut, handleCopy, handlePaste, handleRename, handleDelete, handleShowRelatedElements, handleToggleCompartments]);
+  }, [clipboard, handleCut, handleCopy, handlePaste, handleRename, handleDelete, handleShowRelatedElements, handleShowAllRelationships, handleToggleCompartments, handleHideFromDiagram]);
 
   // Edge Context Menu Handlers
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
@@ -1008,40 +1374,79 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     }
   }, [elementMutations]);
 
-  const handleDeleteEdge = useCallback(async (edge: Edge) => {
-    if (window.confirm(`Are you sure you want to delete this ${edge.data?.kind || 'relationship'}?`)) {
-      try {
-        await elementMutations.deleteRelationship.mutateAsync(edge.id);
+  const handleDeleteEdge = useCallback((edge: Edge) => {
+    setDeleteEdgeConfirm({ edge });
+  }, []);
 
-        // Add undo/redo action
-        addAction({
-          type: 'delete-edge',
-          data: {
+  const confirmEdgeDelete = useCallback(async () => {
+    if (!deleteEdgeConfirm) return;
+
+    const edge = deleteEdgeConfirm.edge;
+    setDeleteEdgeConfirm(null);
+
+    try {
+      await elementMutations.deleteRelationship.mutateAsync(edge.id);
+
+      // Add undo/redo action
+      addAction({
+        type: 'delete-edge',
+        data: {
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          type: edge.data?.kind,
+        },
+        description: `Delete ${edge.data?.kind || 'relationship'}`,
+        undo: async () => {
+          // Would need to recreate the relationship
+          await elementMutations.createRelationship.mutateAsync({
             id: edge.id,
+            type: edge.data?.kind || 'dependency',
             source: edge.source,
             target: edge.target,
-            type: edge.data?.kind,
-          },
-          description: `Delete ${edge.data?.kind || 'relationship'}`,
-          undo: async () => {
-            // Would need to recreate the relationship
-            await elementMutations.createRelationship.mutateAsync({
-              id: edge.id,
-              type: edge.data?.kind || 'dependency',
-              source: edge.source,
-              target: edge.target,
-              label: edge.data?.label,
-            });
-          },
-          redo: async () => {
-            await elementMutations.deleteRelationship.mutateAsync(edge.id);
-          },
-        });
-      } catch (error) {
-        console.error('Delete edge error:', error);
-      }
+            label: edge.data?.label,
+          });
+        },
+        redo: async () => {
+          await elementMutations.deleteRelationship.mutateAsync(edge.id);
+        },
+      });
+    } catch (error) {
+      console.error('Delete edge error:', error);
     }
-  }, [elementMutations, addAction]);
+  }, [deleteEdgeConfirm, elementMutations, addAction]);
+
+  const handleHideEdgeFromDiagram = useCallback(async (edge: Edge) => {
+    if (!activeDiagram) return;
+
+    try {
+      await diagramMutations.hideRelationshipFromDiagram.mutateAsync({
+        diagramId: activeDiagram.id,
+        relationshipId: edge.id,
+      });
+
+      // Add undo/redo action
+      addAction({
+        type: 'remove-from-diagram',
+        data: { diagramId: activeDiagram.id, relationshipId: edge.id },
+        description: `Hide ${edge.data?.kind || 'relationship'} from diagram`,
+        undo: async () => {
+          await diagramMutations.showRelationshipInDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            relationshipId: edge.id,
+          });
+        },
+        redo: async () => {
+          await diagramMutations.hideRelationshipFromDiagram.mutateAsync({
+            diagramId: activeDiagram.id,
+            relationshipId: edge.id,
+          });
+        },
+      });
+    } catch (error) {
+      console.error('Hide edge from diagram error:', error);
+    }
+  }, [activeDiagram, diagramMutations, addAction]);
 
   const handleReverseEdge = useCallback(async (edge: Edge) => {
     if (!activeDiagram) return;
@@ -1105,12 +1510,17 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       },
       { separator: true, label: '', onClick: () => {} },
       {
+        label: 'Hide from diagram',
+        icon: React.createElement(EyeOff, { size: 14 }),
+        onClick: () => handleHideEdgeFromDiagram(edge),
+      },
+      {
         label: 'Delete',
         icon: React.createElement(Trash2, { size: 14 }),
         onClick: () => handleDeleteEdge(edge),
       },
     ];
-  }, [handleEditEdgeLabel, handleReverseEdge, handleDeleteEdge]);
+  }, [handleEditEdgeLabel, handleReverseEdge, handleDeleteEdge, handleHideEdgeFromDiagram]);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
@@ -1257,6 +1667,8 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
           nodeData={editingNode.data}
           onClose={() => setEditingNode(null)}
           onSave={handleNodeEditSave}
+          model={model}
+          viewpointId={selectedDiagram?.viewpointId}
         />
       )}
 
@@ -1264,18 +1676,24 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
       {showPrompt && promptData && (
         <PromptModal
           title={
-            promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
+            promptData.kind === 'state-in-statemachine'
+              ? 'Add State to State Machine'
+              : promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
               ? 'Create Part'
               : 'Create Element'
           }
           message={
-            promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
+            promptData.kind === 'state-in-statemachine'
+              ? 'Enter name for the state:'
+              : promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
               ? `Enter name for the part (${promptData.compositionData?.compositionType}):`
               : `Enter name for ${promptData.kind.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}:`
           }
           defaultValue=""
           placeholder={
-            promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
+            promptData.kind === 'state-in-statemachine'
+              ? 'State name'
+              : promptData.kind === 'composition' || promptData.kind === 'composition-on-canvas'
               ? 'Part name'
               : 'Element name'
           }
@@ -1301,6 +1719,45 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
           y={edgeContextMenu.y}
           items={getEdgeContextMenuItems(edgeContextMenu.edge)}
           onClose={() => setEdgeContextMenu(null)}
+        />
+      )}
+
+      {/* Delete Node Confirmation Modal */}
+      {deleteNodeConfirm && (
+        <ConfirmModal
+          title="Remove from Diagram"
+          message={`Are you sure you want to remove "${deleteNodeConfirm.node.data.name || deleteNodeConfirm.node.id}" from this diagram? The element will still exist in the model.`}
+          confirmLabel="Remove"
+          cancelLabel="Cancel"
+          variant="warning"
+          onConfirm={confirmNodeDelete}
+          onCancel={() => setDeleteNodeConfirm(null)}
+        />
+      )}
+
+      {/* Delete Edge Confirmation Modal */}
+      {deleteEdgeConfirm && (
+        <ConfirmModal
+          title="Delete Relationship"
+          message={`Are you sure you want to delete this ${deleteEdgeConfirm.edge.data?.kind || 'relationship'}? This action cannot be undone.`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          variant="danger"
+          onConfirm={confirmEdgeDelete}
+          onCancel={() => setDeleteEdgeConfirm(null)}
+        />
+      )}
+
+      {/* Info Modal */}
+      {infoMessage && (
+        <ConfirmModal
+          title="Information"
+          message={infoMessage}
+          confirmLabel="OK"
+          cancelLabel="Close"
+          variant="info"
+          onConfirm={() => setInfoMessage(null)}
+          onCancel={() => setInfoMessage(null)}
         />
       )}
     </div>

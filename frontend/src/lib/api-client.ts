@@ -91,6 +91,17 @@ export const apiClient = {
     });
   },
 
+  async createStateInStateMachine(
+    stateMachineId: string,
+    stateDefinitionId: string,
+    stateName: string
+  ): Promise<{ stateUsageId: string; definitionRelId: string; compositionRelId: string }> {
+    return fetchJSON(`${API_BASE}/state-machines/${stateMachineId}/states`, {
+      method: 'POST',
+      body: JSON.stringify({ stateDefinitionId, stateName }),
+    });
+  },
+
   // Position operations
   async updateElementPosition(
     id: string,
@@ -175,6 +186,18 @@ export const apiClient = {
     await fetchJSON(`${API_BASE}/diagrams/${diagramId}/positions`, {
       method: 'PATCH',
       body: JSON.stringify({ positions }),
+    });
+  },
+
+  async hideRelationshipFromDiagram(diagramId: string, relationshipId: string): Promise<void> {
+    await fetchJSON(`${API_BASE}/diagrams/${diagramId}/relationships/${relationshipId}/hide`, {
+      method: 'POST',
+    });
+  },
+
+  async showRelationshipInDiagram(diagramId: string, relationshipId: string): Promise<void> {
+    await fetchJSON(`${API_BASE}/diagrams/${diagramId}/relationships/${relationshipId}/show`, {
+      method: 'POST',
     });
   },
 };

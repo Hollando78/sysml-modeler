@@ -1,4 +1,5 @@
 import type { Edge, Node } from 'reactflow';
+import type { SysMLInternalTransition } from '../../types';
 
 export type SysMLNodeKind =
   // Structural Elements
@@ -141,6 +142,7 @@ export interface SysMLNodeData {
   redefines?: string[];
   subsets?: string[];
   controlType?: 'fork' | 'join' | 'decision' | 'merge';
+  spec?: any; // Full spec data for advanced editing (parameters, attributes, etc.)
 }
 
 export interface SysMLPropertySpec {
@@ -478,6 +480,13 @@ export interface SysMLWhileLoopActionSpec {
   body?: string;
 }
 
+// Action Reference for State Behaviors
+export interface SysMLActionReference {
+  actionId: string;        // ID of the referenced action
+  actionType: 'action-definition' | 'action-usage';
+  actionName: string;      // Cached name for display
+}
+
 // State Definition and Usage (proper v2 version)
 export interface SysMLStateDefinitionSpec {
   id: string;
@@ -486,6 +495,11 @@ export interface SysMLStateDefinitionSpec {
   description?: string;
   isParallel?: boolean;
   substates?: string[];
+  // Actions can be text (legacy) or references to action definitions/usages
+  entryAction?: string | SysMLActionReference;
+  doActivity?: string | SysMLActionReference;
+  exitAction?: string | SysMLActionReference;
+  internalTransitions?: SysMLInternalTransition[];
 }
 
 export interface SysMLStateUsageSpec {
@@ -493,10 +507,12 @@ export interface SysMLStateUsageSpec {
   name: string;
   definition?: string;
   stereotype?: string;
-  entryAction?: string;
-  doAction?: string;
-  exitAction?: string;
+  // Actions can be text (legacy) or references to action definitions/usages
+  entryAction?: string | SysMLActionReference;
+  doActivity?: string | SysMLActionReference;
+  exitAction?: string | SysMLActionReference;
   substates?: string[];
+  internalTransitions?: SysMLInternalTransition[];
 }
 
 export interface SysMLTransitionUsageSpec {

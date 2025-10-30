@@ -41,9 +41,16 @@ export const usageStructureViewpoint: SysMLViewpoint = {
 export const behaviorControlViewpoint: SysMLViewpoint = {
   id: 'sysml.behaviorControl',
   name: 'Behavior & Control Viewpoint',
-  description: 'Captures actions and control nodes with their control and action flows.',
+  description: 'Captures actions and control nodes with succession (temporal ordering), action flows, item flows, and their definitions as specified in SysML v2.',
   includeNodeKinds: ['action-definition', 'action-usage', 'activity-control', 'perform-action'],
-  includeEdgeKinds: ['control-flow', 'action-flow', 'dependency'],
+  includeEdgeKinds: [
+    'definition',           // Links action-usage to action-definition
+    'succession',           // SysML v2: temporal ordering (HappensBefore)
+    'succession-as-usage',  // SysML v2: specific action ordering
+    'action-flow',          // Data/item flows between actions
+    'item-flow',            // Transfer of items between actions
+    'dependency'            // General dependencies
+  ],
 };
 
 export const interactionViewpoint: SysMLViewpoint = {
@@ -57,9 +64,9 @@ export const interactionViewpoint: SysMLViewpoint = {
 export const stateViewpoint: SysMLViewpoint = {
   id: 'sysml.state',
   name: 'State Viewpoint',
-  description: 'State machines, states, and transitions.',
-  includeNodeKinds: ['state-machine', 'state', 'state-definition', 'state-usage'],
-  includeEdgeKinds: ['transition'],
+  description: 'State machines, state definitions/usages, transitions, and actions.',
+  includeNodeKinds: ['state-machine', 'state-definition', 'state-usage', 'action-definition', 'action-usage'],
+  includeEdgeKinds: ['transition', 'composition', 'aggregation', 'definition'],
 };
 
 export const requirementViewpoint: SysMLViewpoint = {
@@ -70,6 +77,14 @@ export const requirementViewpoint: SysMLViewpoint = {
   includeEdgeKinds: ['satisfy', 'refine', 'verify', 'dependency'],
 };
 
+export const useCaseViewpoint: SysMLViewpoint = {
+  id: 'sysml.useCase',
+  name: 'Use Case Viewpoint',
+  description: 'Use case definitions and usages with actors, includes, and extends relationships as described in SysML v2.',
+  includeNodeKinds: ['use-case-definition', 'use-case-usage'],
+  includeEdgeKinds: ['include', 'extend', 'dependency', 'definition'],
+};
+
 export const allViewpoints: SysMLViewpoint[] = [
   structuralDefinitionViewpoint,
   usageStructureViewpoint,
@@ -77,6 +92,7 @@ export const allViewpoints: SysMLViewpoint[] = [
   interactionViewpoint,
   stateViewpoint,
   requirementViewpoint,
+  useCaseViewpoint,
 ];
 
 export function getViewpointById(id: string): SysMLViewpoint | undefined {

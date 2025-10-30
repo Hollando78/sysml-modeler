@@ -136,10 +136,15 @@ const HiddenHandles = ({ connectable }: { connectable?: boolean }) => {
 
 const NodeChrome = ({ data, children }: ChromeProps) => {
   const accent = accentByKind[data.kind] ?? '#262626';
+
+  // SysML v2 spec: Definitions have sharp corners, Usages have rounded corners
+  const isDefinition = data.kind.endsWith('-definition');
+  const borderRadius = isDefinition ? 0 : 6;
+
   return (
     <div
       style={{
-        borderRadius: 6,
+        borderRadius,
         border: `2px solid ${accent}`,
         background: '#151515',
         color: '#f4f4f4',
@@ -257,26 +262,34 @@ const CompartmentList = ({ compartments, show = true }: { compartments?: SysMLCo
             <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>{compartment.title}</div>
           )}
           <div style={{ border: '1px solid rgba(244,244,244,0.15)', borderRadius: 4 }}>
-            {compartment.items.map((item) => (
-              <div
-                key={`${item.label}-${item.value}`}
-                style={{
-                  padding: '4px 8px',
-                  borderBottom: '1px solid rgba(244,244,244,0.08)',
-                  fontSize: 12,
-                  fontWeight: item.emphasis ? 600 : 400
-                }}
-              >
-                {item.value ? (
-                  <>
-                    <span style={{ opacity: 0.75 }}>{item.label}</span>
-                    <span style={{ float: 'right' }}>{item.value}</span>
-                  </>
-                ) : (
-                  item.label
-                )}
-              </div>
-            ))}
+            {compartment.items.map((item) => {
+              // Check if this item is inherited from definition
+              const isInherited = (item as any).inherited === true;
+              const itemOpacity = isInherited ? 0.5 : 0.75;
+              const itemFontStyle = isInherited ? 'italic' : 'normal';
+
+              return (
+                <div
+                  key={`${item.label}-${item.value}`}
+                  style={{
+                    padding: '4px 8px',
+                    borderBottom: '1px solid rgba(244,244,244,0.08)',
+                    fontSize: 12,
+                    fontWeight: item.emphasis ? 600 : 400,
+                    fontStyle: itemFontStyle
+                  }}
+                >
+                  {item.value ? (
+                    <>
+                      <span style={{ opacity: itemOpacity }}>{item.label}</span>
+                      <span style={{ float: 'right', opacity: itemOpacity }}>{item.value}</span>
+                    </>
+                  ) : (
+                    <span style={{ opacity: itemOpacity }}>{item.label}</span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       ))}
@@ -368,8 +381,8 @@ const UseCaseNode = memo((props: NodeProps<SysMLNodeData>) => {
     <>
       <div
         style={{
-          width: 220,
-          height: 140,
+          minWidth: 220,
+          minHeight: 140,
           borderRadius: '50%',
           border: `3px solid ${accent}`,
           background: '#0f172a',
@@ -389,10 +402,11 @@ const UseCaseNode = memo((props: NodeProps<SysMLNodeData>) => {
           {data.stereotype ?? 'use case'}
           {'>>'}
         </div>
-        <div style={{ fontSize: 18, fontWeight: 600 }}>{data.name}</div>
+        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>{data.name}</div>
         {data.documentation && (
-          <div style={{ fontSize: 12, marginTop: 8, opacity: 0.75 }}>{data.documentation}</div>
+          <div style={{ fontSize: 12, marginTop: 4, opacity: 0.75 }}>{data.documentation}</div>
         )}
+        <CompartmentList compartments={data.compartments} show={data.showCompartments} />
       </div>
       <HiddenHandles connectable={isConnectable} />
     </>
