@@ -74,7 +74,7 @@ export const requirementViewpoint: SysMLViewpoint = {
   name: 'Requirement Viewpoint',
   description: 'Requirement definitions and usages with satisfy/refine/verify relationships.',
   includeNodeKinds: ['requirement-definition', 'requirement-usage'],
-  includeEdgeKinds: ['satisfy', 'refine', 'verify', 'dependency'],
+  includeEdgeKinds: ['satisfy', 'refine', 'verify', 'dependency', 'definition'],
 };
 
 export const useCaseViewpoint: SysMLViewpoint = {

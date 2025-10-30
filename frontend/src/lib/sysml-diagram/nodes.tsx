@@ -399,7 +399,7 @@ const UseCaseNode = memo((props: NodeProps<SysMLNodeData>) => {
       >
         <div style={{ fontSize: 12, letterSpacing: 1, textTransform: 'uppercase', opacity: 0.7 }}>
           {'<<'}
-          {data.stereotype ?? 'use case'}
+          {data.stereotype ?? (data.kind === 'use-case-definition' ? 'use case def' : 'use case')}
           {'>>'}
         </div>
         <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>{data.name}</div>

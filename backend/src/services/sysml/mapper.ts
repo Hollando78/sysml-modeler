@@ -163,6 +163,10 @@ export function specToNeo4jProperties(spec: any): Record<string, any> {
   if (spec.effect) props.effect = spec.effect;
   if (spec.rationale) props.rationale = spec.rationale;
 
+  // Edge label positioning
+  if (spec.labelOffsetX !== undefined) props.labelOffsetX = spec.labelOffsetX;
+  if (spec.labelOffsetY !== undefined) props.labelOffsetY = spec.labelOffsetY;
+
   // Layout positions (stored as JSON keyed by viewpoint ID)
   if (spec.positions) {
     props.layoutPositions = JSON.stringify(spec.positions);
@@ -311,6 +315,10 @@ export function neo4jPropertiesToSpec(properties: Record<string, any>): any {
   if (properties.guard) spec.guard = properties.guard;
   if (properties.effect) spec.effect = properties.effect;
   if (properties.rationale) spec.rationale = properties.rationale;
+
+  // Edge label positioning
+  if (properties.labelOffsetX !== undefined) spec.labelOffsetX = properties.labelOffsetX;
+  if (properties.labelOffsetY !== undefined) spec.labelOffsetY = properties.labelOffsetY;
 
   // Layout positions
   if (properties.layoutPositions) {

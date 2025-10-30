@@ -821,4 +821,6 @@ export interface SysMLEdgeData {
   guard?: string;
   effect?: string;
   route?: SysMLEdgeRoute;
+  labelOffsetX?: number;
+  labelOffsetY?: number;
 }

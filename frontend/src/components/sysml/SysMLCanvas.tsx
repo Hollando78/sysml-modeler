@@ -86,6 +86,28 @@ export default function SysMLCanvas({ toolbarMode, toolbarData, onUndoRedoChange
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Listen for edge label updates from EditableEdgeLabel component
+  useEffect(() => {
+    const handleEdgeLabelUpdate = async (event: Event) => {
+      const customEvent = event as CustomEvent<{ edgeId: string; updates: any }>;
+      const { edgeId, updates } = customEvent.detail;
+      console.log('[DEBUG] Edge label update received:', edgeId, updates);
+
+      try {
+        await elementMutations.updateRelationship.mutateAsync({
+          id: edgeId,
+          updates
+        });
+        console.log('[DEBUG] Edge label persisted to backend:', edgeId);
+      } catch (error) {
+        console.error('[ERROR] Failed to persist edge label update:', error);
+      }
+    };
+
+    window.addEventListener('sysml-edge-label-update', handleEdgeLabelUpdate);
+    return () => window.removeEventListener('sysml-edge-label-update', handleEdgeLabelUpdate);
+  }, [elementMutations]);
+
   console.log('[DEBUG] SysMLCanvas render', {
     toolbarMode,
     toolbarData,

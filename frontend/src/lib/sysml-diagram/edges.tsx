@@ -1,6 +1,6 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState, useRef, useEffect } from 'react';
 import type { EdgeProps, EdgeTypes, Node } from 'reactflow';
-import { BaseEdge, EdgeLabelRenderer, Position, getSmoothStepPath, getStraightPath, useStore } from 'reactflow';
+import { BaseEdge, EdgeLabelRenderer, Position, getSmoothStepPath, getStraightPath, useStore, useReactFlow } from 'reactflow';
 
 import type { SysMLEdgeData, SysMLRoutePoint } from './types';
 
@@ -250,6 +250,195 @@ const buildGeometry = (
   };
 };
 
+// Editable, draggable edge label component
+const EditableEdgeLabel = memo(({
+  edgeId,
+  label,
+  defaultX,
+  defaultY,
+  color,
+  trigger,
+  guard,
+  effect,
+  rationale,
+  labelOffsetX,
+  labelOffsetY,
+  onPersist
+}: {
+  edgeId: string;
+  label: string;
+  defaultX: number;
+  defaultY: number;
+  color: string;
+  trigger?: string;
+  guard?: string;
+  effect?: string;
+  rationale?: string;
+  labelOffsetX?: number;
+  labelOffsetY?: number;
+  onPersist?: (updates: { label?: string; labelOffsetX?: number; labelOffsetY?: number }) => void;
+}) => {
+  const { setEdges } = useReactFlow();
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(label);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const offsetX = labelOffsetX ?? 0;
+  const offsetY = labelOffsetY ?? 0;
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleDoubleClick = () => {
+    setIsEditing(true);
+    setEditValue(label);
+  };
+
+  const handleBlur = useCallback(() => {
+    setIsEditing(false);
+    if (editValue.trim() && editValue !== label) {
+      const newLabel = editValue.trim();
+      // Update edge data in React Flow
+      setEdges((edges) =>
+        edges.map((edge) =>
+          edge.id === edgeId
+            ? { ...edge, data: { ...edge.data, label: newLabel } }
+            : edge
+        )
+      );
+      // Persist to backend
+      onPersist?.({ label: newLabel });
+    }
+  }, [editValue, label, edgeId, setEdges, onPersist]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleBlur();
+    } else if (e.key === 'Escape') {
+      setIsEditing(false);
+      setEditValue(label);
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (isEditing) return;
+    setIsDragging(true);
+    setDragStart({ x: e.clientX, y: e.clientY });
+    e.stopPropagation();
+  };
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    const newOffsetX = offsetX + dx;
+    const newOffsetY = offsetY + dy;
+    // Update edge data in React Flow
+    setEdges((edges) =>
+      edges.map((edge) =>
+        edge.id === edgeId
+          ? { ...edge, data: { ...edge.data, labelOffsetX: newOffsetX, labelOffsetY: newOffsetY } }
+          : edge
+      )
+    );
+    setDragStart({ x: e.clientX, y: e.clientY });
+  }, [isDragging, dragStart, offsetX, offsetY, edgeId, setEdges]);
+
+  const handleMouseUp = useCallback(() => {
+    if (isDragging) {
+      setIsDragging(false);
+      // Persist offset to backend when drag ends
+      onPersist?.({ labelOffsetX: offsetX, labelOffsetY: offsetY });
+    }
+  }, [isDragging, offsetX, offsetY, onPersist]);
+
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp]);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        transform: `translate(-50%, -50%) translate(${defaultX + offsetX}px, ${defaultY + offsetY}px)`,
+        background: 'rgba(22, 22, 22, 0.95)',
+        color: '#f4f4f4',
+        padding: '4px 8px',
+        borderRadius: 4,
+        fontSize: 11,
+        border: `1px solid ${color}`,
+        pointerEvents: 'all',
+        whiteSpace: 'nowrap',
+        cursor: isDragging ? 'grabbing' : isEditing ? 'text' : 'grab',
+        userSelect: isEditing ? 'text' : 'none'
+      }}
+      className="sysml-edge-label"
+      onDoubleClick={handleDoubleClick}
+      onMouseDown={handleMouseDown}
+    >
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#f4f4f4',
+            fontSize: 11,
+            fontWeight: 600,
+            padding: 0,
+            margin: 0,
+            outline: 'none',
+            width: '100%',
+            fontFamily: 'inherit'
+          }}
+        />
+      ) : (
+        <div style={{ fontWeight: 600 }}>{label}</div>
+      )}
+      {trigger && (
+        <div style={{ fontSize: 10, color: '#c6c6c6' }}>
+          trigger: {trigger}
+        </div>
+      )}
+      {guard && (
+        <div style={{ fontSize: 10, fontStyle: 'italic', color: '#f1c21b' }}>
+          [{guard}]
+        </div>
+      )}
+      {effect && (
+        <div style={{ fontSize: 10, color: '#82cfff' }}>
+          / {effect}
+        </div>
+      )}
+      {rationale && (
+        <div style={{ fontSize: 10, color: '#8d8d8d', fontStyle: 'italic' }}>
+          {rationale}
+        </div>
+      )}
+    </div>
+  );
+});
+
+EditableEdgeLabel.displayName = 'EditableEdgeLabel';
+
 const SysMLEdgeComponent = memo((props: EdgeProps<SysMLEdgeData>) => {
   const { id, source, target, sourceX, sourceY, targetX, targetY, data } = props;
 
@@ -339,43 +528,26 @@ const SysMLEdgeComponent = memo((props: EdgeProps<SysMLEdgeData>) => {
       />
       {data?.label && (
         <EdgeLabelRenderer>
-          <div
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              background: 'rgba(22, 22, 22, 0.95)',
-              color: '#f4f4f4',
-              padding: '4px 8px',
-              borderRadius: 4,
-              fontSize: 11,
-              border: `1px solid ${style.stroke}`,
-              pointerEvents: 'all',
-              whiteSpace: 'nowrap'
+          <EditableEdgeLabel
+            edgeId={id}
+            label={data.label}
+            defaultX={labelX}
+            defaultY={labelY}
+            color={style.stroke as string}
+            trigger={data.trigger}
+            guard={data.guard}
+            effect={data.effect}
+            rationale={data.rationale}
+            labelOffsetX={data.labelOffsetX}
+            labelOffsetY={data.labelOffsetY}
+            onPersist={(updates) => {
+              // Emit custom event for SysMLCanvas to handle persistence
+              const event = new CustomEvent('sysml-edge-label-update', {
+                detail: { edgeId: id, updates }
+              });
+              window.dispatchEvent(event);
             }}
-            className="sysml-edge-label"
-          >
-            <div style={{ fontWeight: 600 }}>{data.label}</div>
-            {data.trigger && (
-              <div style={{ fontSize: 10, color: '#c6c6c6' }}>
-                trigger: {data.trigger}
-              </div>
-            )}
-            {data.guard && (
-              <div style={{ fontSize: 10, fontStyle: 'italic', color: '#f1c21b' }}>
-                [{data.guard}]
-              </div>
-            )}
-            {data.effect && (
-              <div style={{ fontSize: 10, color: '#82cfff' }}>
-                / {data.effect}
-              </div>
-            )}
-            {data.rationale && (
-              <div style={{ fontSize: 10, color: '#8d8d8d', fontStyle: 'italic' }}>
-                {data.rationale}
-              </div>
-            )}
-          </div>
+          />
         </EdgeLabelRenderer>
       )}
     </>
